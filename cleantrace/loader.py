@@ -21,7 +21,7 @@ import warnings
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -107,11 +107,16 @@ class Measurement:
 # --------------------------------------------------------------------------- API
 
 
-def load_measurement(path, name: Optional[str] = None) -> Measurement:
-    """Charge un fichier de mesure. Lève :class:`LoadError` si le fichier est non conforme."""
+def load_measurement(
+    path, name: Optional[str] = None, progress: Optional[Callable[[str], None]] = None
+) -> Measurement:
+    """Charge un fichier de mesure. Lève :class:`LoadError` si le fichier est non conforme.
+
+    ``progress(message)`` est appelé à chaque étape (lecture, conversion...).
+    """
     path = Path(path)
     try:
-        return _load(path, name or path.name)
+        return _load(path, name or path.name, progress or (lambda _msg: None))
     except LoadError:
         raise
     except Exception as exc:  # pragma: no cover - filet de sécurité
@@ -160,38 +165,43 @@ def format_period(seconds: float) -> str:
 # ------------------------------------------------------------------ implémentation
 
 
-def _load(path: Path, name: str) -> Measurement:
+HEAD_BYTES = 2 * 1024 * 1024  # début du fichier analysé (préambule + premières mesures)
+TAIL_BYTES = 256 * 1024  # fin du fichier analysée (séparateur, nombre de colonnes)
+
+
+def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement:
     if not path.is_file():
         raise LoadError("Fichier introuvable : {}".format(path))
+    size_mb = path.stat().st_size / 1e6
+    progress("Analyse du format de {} ({:.0f} Mo)…".format(path.name, size_mb))
 
-    text, encoding = _read_text(path)
-    lines = [line for line in text.splitlines()]
-    while lines and not lines[-1].strip():
-        lines.pop()
-    if not any(line.strip() for line in lines):
+    encoding = _detect_encoding(path)
+    head, tail = _head_tail_lines(path, encoding)
+    if not any(line.strip() for line in head):
         raise LoadError("Le fichier « {} » est vide.".format(path.name))
 
-    sep = _detect_separator(lines, path.name)
-    rows = list(csv.reader(lines, delimiter=sep))
-    n_cols = _modal_field_count(rows)
-    decimal = _detect_decimal(rows, sep, n_cols)
+    sample = [line for line in head[-300:] + tail[-300:] if line.strip()]
+    sep = _detect_separator(sample, path.name, head)
+    head_rows = list(csv.reader(head, delimiter=sep))
+    n_cols = _modal_field_count(list(csv.reader(sample, delimiter=sep)))
+    decimal = _detect_decimal(list(csv.reader(sample, delimiter=sep)), sep, n_cols)
 
-    first_data = _find_first_data_row(rows, n_cols, decimal)
+    first_data = _find_first_data_row(head_rows, n_cols)
     if first_data is None:
         raise LoadError(
             "Le fichier « {} » ne contient pas de données numériques exploitables "
-            "(aucune ligne de mesure reconnue).".format(path.name)
+            "(aucune ligne de mesure reconnue).\n\n{}".format(
+                path.name, _diagnostic(head, sep, n_cols, encoding))
         )
-    headers, units = _find_headers(rows, first_data, n_cols, decimal)
-    signal_names = _graphtec_amp_settings(rows[:first_data])
+    headers, units = _find_headers(head_rows, first_data, n_cols, decimal)
+    signal_names = _graphtec_amp_settings(head_rows[:first_data])
     for col, (_, unit) in signal_names.items():
         units.setdefault(col, unit)
 
-    data_rows = [r for r in rows[first_data:] if len(r) == n_cols]
-    skipped = len(rows) - first_data - len(data_rows)
-    raw = pd.DataFrame(data_rows, columns=headers)
-    raw = raw.apply(lambda s: s.str.strip().str.strip('"'))
+    progress("Lecture des mesures de {} ({:.0f} Mo)…".format(path.name, size_mb))
+    raw = _read_table(path, encoding, sep, decimal, first_data, headers)
 
+    progress("Conversion du temps de {}…".format(path.name))
     time_s, start, used_cols = _extract_time(raw, decimal, path.name)
 
     # Voies de mesure : toutes les autres colonnes numériques
@@ -201,33 +211,40 @@ def _load(path: Path, name: str) -> Measurement:
     for col in raw.columns:
         if col in used_cols or _INDEX_NAME_RE.match(col.strip()) or not col.strip():
             continue
-        numeric = _to_numeric(raw[col], decimal)
-        if numeric.notna().sum() == 0:
+        column = raw[col]
+        if not pd.api.types.is_numeric_dtype(column):
+            if _to_numeric(column.dropna().head(500), decimal).notna().sum() == 0:
+                continue  # colonne de texte (alarmes, messages...) : inutile de tout convertir
+            text = column.dropna().astype(str).str.strip()
+            over_range += int(text.str.match(_OVER_RANGE_RE).sum())
+            column = _to_numeric(column, decimal)
+        if column.notna().sum() == 0:
             continue  # colonne de texte (alarmes, messages...)
-        over_range += int(raw[col].str.match(_OVER_RANGE_RE).sum())
         alias = signal_names.get(col, ("", ""))[0]
         ch = make_channel(col, units.get(col), alias=alias)
         label = _unique(ch.label, values)
         if label != ch.label:
             ch = Channel(ch.raw_name, label, ch.unit, ch.quantity)
         channels.append(ch)
-        values[label] = numeric.to_numpy(dtype=float)
+        values[label] = column.to_numpy(dtype=float)
 
     if not channels:
         raise LoadError(
             "Le fichier « {} » ne contient aucune voie de mesure numérique "
-            "en plus de la colonne temps.".format(path.name)
+            "en plus de la colonne temps.\n\nColonnes lues : {}".format(path.name, ", ".join(headers))
         )
 
     df = pd.DataFrame(values)
     df.insert(0, "_t", time_s)
-    df = df[np.isfinite(df["_t"].to_numpy())]
+    valid = np.isfinite(df["_t"].to_numpy())
+    skipped = int((~valid).sum())
+    df = df[valid]
     if df.empty:
         raise LoadError("La colonne temps du fichier « {} » est illisible.".format(path.name))
 
     msgs = []
     if skipped:
-        msgs.append("{} ligne(s) hors tableau ignorée(s) (messages, lignes incomplètes).".format(skipped))
+        msgs.append("{} ligne(s) sans horodatage ignorée(s) (messages, lignes incomplètes).".format(skipped))
     if over_range:
         msgs.append("{} valeur(s) hors échelle (+++++++, BURNOUT...) laissées vides : "
                     "« Nettoyer » répare les plus courtes.".format(over_range))
@@ -243,7 +260,7 @@ def _load(path: Path, name: str) -> Measurement:
     return Measurement(
         name=name,
         path=path,
-        source=_guess_source(path.name, lines[:first_data]),
+        source=_guess_source(path.name, head[:first_data]),
         encoding=encoding,
         separator=sep,
         decimal=decimal,
@@ -256,26 +273,90 @@ def _load(path: Path, name: str) -> Measurement:
     )
 
 
-def _read_text(path: Path) -> Tuple[str, str]:
-    raw = path.read_bytes()
-    if b"\x00" in raw[:4096] and not raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+def _detect_encoding(path: Path) -> str:
+    with open(path, "rb") as fh:
+        head = fh.read(HEAD_BYTES)
+        fh.seek(max(0, path.stat().st_size - TAIL_BYTES))
+        tail = fh.read()
+    if head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return "utf-16"
+    if b"\x00" in head[:4096]:
         raise LoadError(
-            "Le fichier « {} » semble être un fichier binaire, pas un export texte "
-            "(CSV/TXT/DAT).".format(path.name)
+            "Le fichier « {} » semble être un fichier binaire (ex. .GBD Graphtec ou .UHH "
+            "nanodac), pas un export texte. Exportez-le en CSV depuis l'appareil ou son "
+            "logiciel.".format(path.name)
         )
-    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
-        return raw.decode("utf-16"), "utf-16"
+    # On coupe aux fins de ligne pour ne pas tronquer un caractère multi-octets
+    sample = head[: head.rfind(b"\n") + 1 or None] + tail[tail.find(b"\n") + 1:]
     for enc in ENCODINGS:
         try:
-            return raw.decode(enc), "utf-8" if enc == "utf-8-sig" else enc
+            sample.decode(enc)
+            return "utf-8" if enc == "utf-8-sig" else enc
         except UnicodeDecodeError:
             continue
-    raise LoadError("Encodage du fichier « {} » non reconnu.".format(path.name))  # pragma: no cover
+    return "latin-1"  # pragma: no cover - latin-1 décode tout
 
 
-def _detect_separator(lines: List[str], filename: str) -> str:
-    # Les dernières lignes sont des données : le préambule de la centrale ne compte pas.
-    sample = [line for line in lines if line.strip()][-200:]
+def _open_text(path: Path, encoding: str):
+    enc = "utf-8-sig" if encoding == "utf-8" else encoding
+    return open(path, "r", encoding=enc, errors="replace", newline=None)
+
+
+def _head_tail_lines(path: Path, encoding: str) -> Tuple[List[str], List[str]]:
+    """Premières lignes (≈ 2 Mo) et dernières lignes (≈ 256 Ko) du fichier."""
+    with _open_text(path, encoding) as fh:
+        head_text = fh.read(HEAD_BYTES)
+    head = head_text.split("\n")
+    if len(head_text) >= HEAD_BYTES:
+        head = head[:-1]  # dernière ligne probablement tronquée
+    if path.stat().st_size <= HEAD_BYTES or encoding == "utf-16":
+        tail = head
+    else:
+        with open(path, "rb") as fh:
+            fh.seek(path.stat().st_size - TAIL_BYTES)
+            data = fh.read()
+        text = data.decode(encoding, errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+        tail = text.split("\n")[1:]  # première ligne tronquée
+    while head and not head[-1].strip():
+        head.pop()
+    while tail and not tail[-1].strip():
+        tail.pop()
+    return head, tail
+
+
+def _read_table(path: Path, encoding: str, sep: str, decimal: str, first_data: int, headers: List[str]):
+    """Lecture rapide (moteur C de pandas) de la partie données du fichier."""
+    names = list(range(len(headers)))
+    text_cols = [i for i, h in enumerate(headers) if _is_time_header(h)] + [0]
+    with _open_text(path, encoding) as fh:
+        for _ in range(first_data):
+            fh.readline()
+        df = pd.read_csv(
+            fh, sep=sep, header=None, names=names, index_col=False, decimal=decimal,
+            dtype={i: str for i in text_cols}, skip_blank_lines=True, engine="c",
+            on_bad_lines="skip", low_memory=False, quotechar='"',
+        )
+    df.columns = headers
+    return df
+
+
+def _is_time_header(header: str) -> bool:
+    name = split_name_unit(header)[0]
+    return bool(_TIME_NAME_RE.search(name) or _SUBSECOND_NAME_RE.match(name))
+
+
+def _diagnostic(lines: List[str], sep: str, n_cols: int, encoding: str) -> str:
+    """Résumé de ce qui a été lu, pour comprendre un fichier refusé."""
+    preview = [line[:100] + ("…" if len(line) > 100 else "") for line in lines if line.strip()][:8]
+    return (
+        "Diagnostic : encodage {}, séparateur {}, {} colonnes.\n"
+        "Premières lignes :\n{}".format(
+            encoding, SEPARATOR_NAMES.get(sep, repr(sep)), n_cols, "\n".join(preview))
+    )
+
+
+def _detect_separator(sample: List[str], filename: str, head: List[str]) -> str:
+    # Lignes de données (début + fin du fichier) : le préambule ne doit pas compter.
     for sep in SEPARATORS:
         counts = [len(r) for r in csv.reader(sample, delimiter=sep)]
         value, freq = Counter(counts).most_common(1)[0]
@@ -284,36 +365,36 @@ def _detect_separator(lines: List[str], filename: str) -> str:
     raise LoadError(
         "Impossible de détecter le séparateur de colonnes du fichier « {} » "
         "(attendu : « ; », « , » ou tabulation, avec au moins une colonne temps "
-        "et une voie de mesure).".format(filename)
+        "et une voie de mesure).\n\n{}".format(filename, _diagnostic(head, ",", 0, "?"))
     )
 
 
 def _modal_field_count(rows: List[List[str]]) -> int:
-    tail = [len(r) for r in rows[-200:] if r]
-    return Counter(tail).most_common(1)[0][0]
+    counts = [len(r) for r in rows if r]
+    return Counter(counts).most_common(1)[0][0]
 
 
 def _detect_decimal(rows: List[List[str]], sep: str, n_cols: int) -> str:
     if sep == ",":
         return "."
-    for r in rows[-200:]:
+    for r in rows:
         if len(r) == n_cols and any(_DECIMAL_COMMA_RE.match(f.strip().strip('"')) for f in r):
             return ","
     return "."
 
 
 def _is_value(field_: str) -> bool:
-    f = field_.strip().strip('"')
-    return bool(f) and bool(_NUMBER_RE.match(f) or _DATETIME_LIKE_RE.match(f))
+    f = field_.strip().strip('"').lstrip("'")
+    return bool(f) and bool(_NUMBER_RE.match(f) or _DATETIME_LIKE_RE.match(f) or _OVER_RANGE_RE.match(f))
 
 
 def _is_data_row(row: List[str], n_cols: int) -> bool:
-    if len(row) != n_cols:
-        return False
-    return sum(_is_value(f) for f in row) >= max(2, math.ceil(n_cols / 2))
+    # Un horodatage + au moins une valeur suffisent : les colonnes d'alarme ("LLLL"),
+    # de messages ou les voies débranchées ne doivent pas faire rejeter la ligne.
+    return len(row) == n_cols and sum(_is_value(f) for f in row) >= 2
 
 
-def _find_first_data_row(rows, n_cols, decimal) -> Optional[int]:
+def _find_first_data_row(rows, n_cols) -> Optional[int]:
     for i in range(len(rows)):
         if _is_data_row(rows[i], n_cols) and all(
             _is_data_row(rows[j], n_cols) for j in range(i + 1, min(i + 3, len(rows)))
@@ -399,7 +480,13 @@ def _unique(label: str, existing) -> str:
 
 
 def _to_numeric(series: pd.Series, decimal: str) -> pd.Series:
-    s = series.astype(str).str.strip().str.replace(" ", "", regex=False)
+    if pd.api.types.is_numeric_dtype(series):
+        return series.astype(float)
+    if decimal == ".":
+        fast = pd.to_numeric(series, errors="coerce")  # conversion C, sans traitement de texte
+        if fast.notna().sum() >= 0.99 * series.notna().sum():
+            return fast.astype(float)
+    s = series.fillna("").astype(str).str.strip().str.replace(" ", "", regex=False)
     if decimal == ",":
         s = s.str.replace(",", ".", regex=False)
     return pd.to_numeric(s, errors="coerce")
@@ -426,8 +513,8 @@ def _extract_time(raw: pd.DataFrame, decimal: str, filename: str):
     # Date et heure dans deux colonnes séparées ("Date" ; "Heure")
     if _DATE_ONLY_NAME_RE.match(names[main]) and len(time_cols) > 1:
         other = time_cols[1]
-        if not raw[main].str.contains(":").any() and raw[other].str.contains(":").any():
-            series = raw[main] + " " + raw[other]
+        if not raw[main].str.contains(":", na=False).any() and raw[other].str.contains(":", na=False).any():
+            series = raw[main].fillna("") + " " + raw[other].fillna("")
             used.add(other)
 
     seconds, start = _parse_time(series, main, decimal, filename)
@@ -441,17 +528,27 @@ def _extract_time(raw: pd.DataFrame, decimal: str, filename: str):
             used.add(ms_cols[0])
 
     for c in cols:  # les autres colonnes date/heure ne sont pas des voies
-        if c != main and _TIME_NAME_RE.search(names[c]) and _to_numeric(raw[c], decimal).notna().mean() < 0.5:
-            used.add(c)
+        if c != main and _TIME_NAME_RE.search(names[c]):
+            head = raw[c].dropna().head(200)
+            if _to_numeric(head, decimal).notna().mean() < 0.5:
+                used.add(c)
     return seconds, start, used
 
 
 def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
-    s = series.astype(str).str.strip()
     name, unit = split_name_unit(header)
+    s = series.fillna("").astype(str)
+    # Le type de la colonne est décidé sur un échantillon : les traitements de texte
+    # sur des millions de lignes ne sont faits que s'ils sont vraiment nécessaires.
+    raw_sample = s[s != ""].head(200)
+    sample = raw_sample.str.strip().str.lstrip("'")
+    if (sample != raw_sample).any():
+        s = s.str.strip().str.lstrip("'")
+    if sample.empty:
+        raise LoadError("La colonne temps « {} » du fichier « {} » est vide.".format(header, filename))
 
-    numeric = _to_numeric(s, decimal)
-    if numeric.notna().mean() > 0.9:
+    if _to_numeric(sample, decimal).notna().mean() > 0.9:
+        numeric = _to_numeric(s, decimal)
         values = numeric.to_numpy(dtype=float)
         first = values[np.isfinite(values)][0]
         diffs = np.diff(values[np.isfinite(values)])
@@ -472,19 +569,15 @@ def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
             factor = 1.0  # secondes par défaut
         return (values - first) * factor, None
 
-    sample = s[s != ""]
-    if len(sample) and sample.str.match(_DURATION_RE).mean() > 0.9:
+    if sample.str.match(_DURATION_RE).mean() > 0.9:
         td = pd.to_timedelta(s.str.replace(",", ".", regex=False), errors="coerce")
         secs = td.dt.total_seconds().to_numpy(dtype=float)
         return secs - secs[np.isfinite(secs)][0], None
 
     # Date/heure absolue. "2026/10/01" -> année en tête ; "01/10/2026" -> jour en tête.
-    cleaned = s.str.replace(r"(:\d{2}),(\d+)$", r"\1.\2", regex=True)
-    first_value = cleaned[cleaned != ""].iloc[0] if (cleaned != "").any() else ""
-    dayfirst = not _YEAR_FIRST_RE.match(first_value)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        dt = pd.to_datetime(cleaned, dayfirst=dayfirst, errors="coerce")
+    if sample.str.contains(r":\d{2},\d+$").any():  # secondes avec virgule décimale
+        s = s.str.replace(r"(:\d{2}),(\d+)$", r"\1.\2", regex=True)
+    dt = _to_datetime(s)
     if dt.notna().mean() < 0.9:
         raise LoadError(
             "La colonne temps « {} » du fichier « {} » n'est pas reconnue "
@@ -493,6 +586,31 @@ def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
     start = dt[dt.notna()].iloc[0]
     secs = (dt - start).dt.total_seconds().to_numpy(dtype=float)
     return secs, start
+
+
+# Formats de date/heure courants, essayés d'abord : bien plus rapide que la détection
+# automatique de pandas sur des millions de lignes.
+_DATETIME_FORMATS = (
+    "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M:%S.%f", "%Y/%m/%d %H:%M",
+    "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f",
+    "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M:%S.%f", "%d/%m/%Y %H:%M",
+    "%d-%m-%Y %H:%M:%S", "%d.%m.%Y %H:%M:%S", "%d/%m/%y %H:%M:%S",
+)
+
+
+def _to_datetime(s: pd.Series) -> pd.Series:
+    sample = s[s != ""].head(50)
+    for fmt in _DATETIME_FORMATS:
+        try:
+            pd.to_datetime(sample, format=fmt)
+        except (ValueError, TypeError):
+            continue
+        return pd.to_datetime(s, format=fmt, errors="coerce")
+    # Format inhabituel : détection automatique (plus lente)
+    first_value = sample.iloc[0] if len(sample) else ""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return pd.to_datetime(s, dayfirst=not _YEAR_FIRST_RE.match(first_value), errors="coerce")
 
 
 def _sampling_period(seconds: np.ndarray) -> float:

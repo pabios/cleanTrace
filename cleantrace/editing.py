@@ -6,7 +6,9 @@ Le point cliqué est remplacé par l'interpolation temporelle de ses voisins imm
     alpha  = (x[idx] - x_gauche) / (x_droite - x_gauche)
 
 Seule la courbe concernée est mise à jour, puis ``fig.canvas.draw_idle()`` rafraîchit
-l'écran : pas de retracé complet.
+l'écran : pas de retracé complet. Sur un gros fichier, la courbe affichée est réduite
+(voir ``plotting.decimate_indices``) : l'interpolation est donc faite sur les données
+complètes, à l'indice réel du point cliqué.
 """
 from __future__ import annotations
 
@@ -37,19 +39,22 @@ def interpolate_at(x, y, idx: int) -> float:
 class ClickCorrector:
     """Branche la correction au clic gauche sur une figure Matplotlib.
 
-    Seules les courbes portant un ``gid`` sont corrigeables. Après chaque correction,
-    ``on_correct(gid, idx, nouvelle_valeur)`` est appelé pour mettre à jour les données.
+    Seules les courbes portant un ``gid`` sont corrigeables. À chaque clic sur un point,
+    ``on_point_clicked(gid, indice_du_point_tracé)`` est appelé : l'application corrige
+    alors la donnée et met à jour la courbe.
+
+    Garder une référence à l'objet : Matplotlib ne garde qu'une référence faible au callback.
     """
 
     def __init__(
         self,
         figure,
-        on_correct: Callable[[str, int, float], None],
+        on_point_clicked: Callable[[str, int], None],
         is_enabled: Callable[[], bool] = lambda: True,
         pickradius: float = 6.0,
     ):
         self.figure = figure
-        self.on_correct = on_correct
+        self.on_point_clicked = on_point_clicked
         self.is_enabled = is_enabled
         self.pickradius = pickradius
         self._cid = figure.canvas.mpl_connect("button_press_event", self._on_press)
@@ -67,12 +72,7 @@ class ClickCorrector:
         if hit is None:
             return
         line, idx = hit
-        x = np.asarray(line.get_xdata(), dtype=float)
-        y = np.array(line.get_ydata(), dtype=float)
-        y[idx] = interpolate_at(x, y, idx)
-        line.set_ydata(y)
-        self.on_correct(line.get_gid(), idx, float(y[idx]))
-        self.figure.canvas.draw_idle()
+        self.on_point_clicked(line.get_gid(), idx)
 
     def find_point(self, event) -> Optional[Tuple[object, int]]:
         """Courbe et indice du point le plus proche du clic (toutes les axes, y compris twinx)."""

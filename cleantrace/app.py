@@ -11,6 +11,8 @@ Disposition :
 """
 from __future__ import annotations
 
+import queue
+import threading
 import traceback
 import tkinter as tk
 from pathlib import Path
@@ -45,6 +47,8 @@ class CleanTraceApp:
         self._file_item: Dict[str, str] = {}  # nom de fichier -> id Treeview
         self._gid_key: Dict[str, Key] = {}  # gid de courbe -> voie
         self._last_dir = str(EXAMPLES_DIR if EXAMPLES_DIR.is_dir() else Path.home())
+        self.busy = False  # un traitement long tourne en arrière-plan
+        self._action_buttons: List[ttk.Button] = []
 
         root.title(APP_TITLE)
         root.geometry("1400x860")
@@ -64,9 +68,14 @@ class CleanTraceApp:
     def _build_toolbar(self) -> None:
         bar = ttk.Frame(self.root, padding=(6, 6))
         bar.pack(fill=tk.X)
-        ttk.Button(bar, text="Ouvrir des fichiers…", command=self.open_files).pack(side=tk.LEFT)
-        ttk.Button(bar, text="Exporter en CSV…", command=self.export_csv).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bar, text="Réinitialiser", command=self.reset_all).pack(side=tk.LEFT)
+        for text, command, pad in (
+            ("Ouvrir des fichiers…", self.open_files, 0),
+            ("Exporter en CSV…", self.export_csv, 6),
+            ("Réinitialiser", self.reset_all, 0),
+        ):
+            button = ttk.Button(bar, text=text, command=command)
+            button.pack(side=tk.LEFT, padx=(0, pad))
+            self._action_buttons.append(button)
         self.lbl_reference = ttk.Label(bar, text="", foreground="#555")
         self.lbl_reference.pack(side=tk.RIGHT)
 
@@ -105,8 +114,13 @@ class CleanTraceApp:
                         variable=self.chk_peaks).pack(anchor=tk.W)
         row = ttk.Frame(clean)
         row.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(row, text="Nettoyer", command=self.clean_selected).pack(side=tk.LEFT)
-        ttk.Button(row, text="Restaurer les données brutes", command=self.restore_selected).pack(side=tk.LEFT, padx=4)
+        for text, command, pad in (
+            ("Nettoyer", self.clean_selected, 0),
+            ("Restaurer les données brutes", self.restore_selected, 4),
+        ):
+            button = ttk.Button(row, text=text, command=command)
+            button.pack(side=tk.LEFT, padx=pad)
+            self._action_buttons.append(button)
 
         # --- US-04 : décalage temporel des courbes climatiques
         shift = ttk.LabelFrame(side, text="Décalage enceinte climatique (min)", padding=6)
@@ -138,8 +152,18 @@ class CleanTraceApp:
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.plot = PlotManager(self.figure)
-        self.corrector = ClickCorrector(self.figure, self._on_point_corrected,
-                                        is_enabled=self.chk_click_edit.get)
+        self.corrector = ClickCorrector(
+            self.figure, self._on_point_clicked,
+            is_enabled=lambda: self.chk_click_edit.get() and not self.busy,
+        )
+
+        # Indicateur de chargement, affiché par-dessus le graphique
+        self.busy_panel = ttk.Frame(frame, padding=(28, 18), relief=tk.RIDGE, borderwidth=2)
+        self.busy_text = tk.StringVar()
+        ttk.Label(self.busy_panel, text="Traitement en cours…", font=("TkDefaultFont", 11, "bold")).pack()
+        ttk.Label(self.busy_panel, textvariable=self.busy_text, wraplength=420, justify=tk.CENTER).pack(pady=(6, 10))
+        self.busy_bar = ttk.Progressbar(self.busy_panel, mode="indeterminate", length=320)
+        self.busy_bar.pack()
         return frame
 
     def _build_statusbar(self) -> None:
@@ -161,12 +185,15 @@ class CleanTraceApp:
         if not paths:
             return
         self._last_dir = str(Path(paths[0]).parent)
-        self.root.config(cursor="watch")
-        self.root.update_idletasks()
-        try:
-            loaded, errors = self.session.load_files(paths)
-        finally:
-            self.root.config(cursor="")
+        self.run_in_background(
+            "Chargement de {} fichier(s)…".format(len(paths)),
+            lambda progress: self.session.read_files(paths, progress),
+            self._on_files_read,
+        )
+
+    def _on_files_read(self, result) -> None:
+        loaded, errors = result
+        self.session.add_measurements(loaded)
         for m in loaded:
             for ch in m.channels:
                 self._checked[(m.name, ch.label)] = True
@@ -183,13 +210,15 @@ class CleanTraceApp:
             messagebox.showerror("Fichier non conforme", "\n\n".join(errors), parent=self.root)
 
     def select_all(self, state: bool) -> None:
+        if self.busy:
+            return
         for key in self._checked:
             self._checked[key] = state
         self._refresh_checkmarks()
         self.redraw()
 
     def reset_all(self) -> None:
-        if not self.session.measurements:
+        if self.busy or not self.session.measurements:
             return
         if not messagebox.askyesno("Réinitialiser", "Décharger tous les fichiers ?\n"
                                    "Les nettoyages et corrections non exportés seront perdus.",
@@ -211,16 +240,22 @@ class CleanTraceApp:
             messagebox.showinfo("Nettoyage", "Activez au moins un traitement.", parent=self.root)
             return
         options = CleaningOptions(remove_noise=self.chk_noise.get(), remove_peaks=self.chk_peaks.get())
-        report = self.session.apply_cleaning(keys, options)
-        self.redraw()
-        self._set_status(
-            "Nettoyage de {} voie(s) : {} pic(s) supprimé(s), {} point(s) de bruit forcés à 0.".format(
-                len(keys), report.peak_points, report.noise_points)
+
+        def done(report):
+            self.redraw()
+            self._set_status(
+                "Nettoyage de {} voie(s) : {} pic(s) supprimé(s), {} point(s) de bruit forcés à 0.".format(
+                    len(keys), report.peak_points, report.noise_points)
+            )
+
+        self.run_in_background(
+            "Nettoyage de {} voie(s)…".format(len(keys)),
+            lambda progress: self.session.apply_cleaning(keys, options), done,
         )
 
     def restore_selected(self) -> None:
         keys = self.selected_keys()
-        if keys:
+        if keys and not self.busy:
             self.session.restore_raw(keys)
             self.redraw()
             self._set_status("Données brutes restaurées pour {} voie(s).".format(len(keys)))
@@ -238,17 +273,78 @@ class CleanTraceApp:
         )
         if not path:
             return
-        try:
-            df = self.session.export_csv(path, keys)
-        except Exception as exc:
-            messagebox.showerror("Export impossible", "L'export a échoué :\n{}".format(exc), parent=self.root)
-            return
-        messagebox.showinfo(
-            "Export terminé",
-            "{} lignes × {} voies exportées dans :\n{}".format(len(df), len(keys), path),
-            parent=self.root,
+
+        def done(df):
+            messagebox.showinfo(
+                "Export terminé",
+                "{} lignes × {} voies exportées dans :\n{}".format(len(df), len(keys), path),
+                parent=self.root,
+            )
+            self._set_status("Export : {}".format(path))
+
+        self.run_in_background(
+            "Export de {} voie(s) vers {}…".format(len(keys), Path(path).name),
+            lambda progress: self.session.export_csv(path, keys), done,
+            error_title="Export impossible",
         )
-        self._set_status("Export : {}".format(path))
+
+    # ======================================================= traitements longs
+
+    def run_in_background(self, message: str, work, on_done, error_title: str = "Erreur") -> None:
+        """Exécute ``work(progress)`` dans un thread, avec l'indicateur de chargement.
+
+        Tkinter n'est pas thread-safe : le thread ne touche jamais à l'interface, il
+        envoie ses messages dans une file que la boucle Tkinter relève toutes les 100 ms.
+        """
+        if self.busy:
+            return
+        self._set_busy(True, message)
+        messages: "queue.Queue" = queue.Queue()
+
+        def target():
+            try:
+                result = work(lambda text: messages.put(("progress", text)))
+                messages.put(("done", result))
+            except Exception as exc:  # remonté à l'utilisateur dans la boucle Tkinter
+                messages.put(("error", exc, traceback.format_exc()))
+
+        threading.Thread(target=target, daemon=True).start()
+        self.root.after(100, self._poll_background, messages, on_done, error_title)
+
+    def _poll_background(self, messages, on_done, error_title) -> None:
+        try:
+            while True:
+                item = messages.get_nowait()
+                if item[0] == "progress":
+                    self.busy_text.set(item[1])
+                    self._set_status(item[1])
+                    continue
+                self._set_busy(False)
+                if item[0] == "done":
+                    on_done(item[1])
+                else:
+                    print(item[2])
+                    messagebox.showerror(error_title, str(item[1]), parent=self.root)
+                return
+        except queue.Empty:
+            self.root.after(100, self._poll_background, messages, on_done, error_title)
+
+    def _set_busy(self, busy: bool, message: str = "") -> None:
+        self.busy = busy
+        state = tk.DISABLED if busy else tk.NORMAL
+        for button in self._action_buttons:
+            button.config(state=state)
+        if busy:
+            self.busy_text.set(message)
+            self._set_status(message)
+            self.busy_panel.place(relx=0.5, rely=0.45, anchor=tk.CENTER)
+            self.busy_panel.lift()
+            self.busy_bar.start(12)
+            self.root.config(cursor="watch")
+        else:
+            self.busy_bar.stop()
+            self.busy_panel.place_forget()
+            self.root.config(cursor="")
 
     # ================================================================== affichage
 
@@ -291,6 +387,8 @@ class CleanTraceApp:
             self.tree.item(file_id, text="{}  {}".format(mark, name))
 
     def _on_tree_click(self, event):
+        if self.busy:
+            return "break"
         item = self.tree.identify_row(event.y)
         if not item or "indicator" in self.tree.identify_element(event.x, event.y):
             return None  # clic sur la flèche d'ouverture : comportement normal
@@ -318,11 +416,14 @@ class CleanTraceApp:
         span = max(10.0, round(self.session.total_duration_min * 0.25))
         self.offset_scale.config(from_=-span, to=span)
 
-    def _on_point_corrected(self, gid: str, index: int, value: float) -> None:
+    def _on_point_clicked(self, gid: str, plotted_index: int) -> None:
+        """US-05 : interpolation du point cliqué, sur les données complètes."""
         key = self._gid_key.get(gid)
         if key is None:
             return
-        self.session.set_value(key, index, value)
+        index = self.plot.original_index(gid, plotted_index)
+        value = self.session.correct_point(key, index)
+        self.plot.update_data(gid, self.session.measurements[key[0]].data[key[1]].to_numpy())
         self._set_status("Point corrigé : {} [{}], indice {} → {:.6g}".format(key[1], key[0], index, value))
 
     def _set_status(self, text: str) -> None:

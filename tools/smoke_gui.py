@@ -4,7 +4,9 @@ Ouvre les fichiers d'exemple, nettoie, corrige un point au clic, décale la temp
 exporte, et enregistre des captures d'écran dans le dossier passé en argument.
 
 Usage : ./dev.sh smoke   (captures dans .dev-out/)
+        python tools/smoke_gui.py <dossier> <gros_fichier.csv>   (teste aussi un gros fichier)
 """
+import time
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -33,6 +35,16 @@ def pump(root, n=20):
         root.update()
 
 
+def wait_idle(root, gui, timeout=300):
+    """Attend la fin du traitement en arrière-plan."""
+    end = time.time() + timeout
+    while gui.busy and time.time() < end:
+        root.update()
+        time.sleep(0.05)
+    assert not gui.busy, "traitement trop long"
+    pump(root)
+
+
 def shot(root, name):
     pump(root)
     x, y = root.winfo_rootx(), root.winfo_rooty()
@@ -48,6 +60,7 @@ def main():
     shot(root, "0_accueil.png")
 
     gui.open_files(EXAMPLES)
+    wait_idle(root, gui)
     assert len(gui.session.measurements) == 2, dialogs
     shot(root, "1_import.png")
 
@@ -60,6 +73,7 @@ def main():
     shot(root, "2_shunt_brut.png")
 
     gui.clean_selected()
+    wait_idle(root, gui)
     print("état :", gui.status.get())
     shot(root, "3_shunt_nettoye.png")
 
@@ -91,10 +105,26 @@ def main():
     shot(root, "5_toutes_voies_decalage.png")
 
     gui.export_csv()
+    wait_idle(root, gui)
     assert (OUT / "export.csv").exists(), dialogs
     print("export :", dialogs[-1])
     errors = [d for d in dialogs if d[0] == "error"]
     assert not errors, errors
+
+    if len(sys.argv) > 2:  # gros fichier : indicateur de chargement + temps total
+        gui.session.clear()
+        gui._checked.clear()
+        t0 = time.time()
+        gui.open_files([sys.argv[2]])
+        for _ in range(15):
+            root.update()
+            time.sleep(0.05)
+        shot(root, "6_chargement_gros_fichier.png")
+        wait_idle(root, gui)
+        print("gros fichier chargé et affiché en %.1f s" % (time.time() - t0), "|", gui.status.get())
+        shot(root, "7_gros_fichier.png")
+        errors = [d for d in dialogs if d[0] == "error"]
+        assert not errors, errors
     root.destroy()
     print("SMOKE OK")
 

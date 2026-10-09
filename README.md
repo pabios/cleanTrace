@@ -53,6 +53,9 @@ Prévu pour les enregistreurs **Graphtec GL980** (export CSV, tableau « Amp set
 valeurs hors échelle `+++++++`) et **Eurotherm nanodac** (archive CSV, date en texte ou
 en nombre Excel, tabulation ou virgule). Un exemple de chacun est fourni dans `exemples/`.
 
+Les gros fichiers (plusieurs millions de lignes) sont lus en quelques secondes, avec un
+indicateur de chargement.
+
 Plus généralement : CSV, TXT ou DAT · séparateur `;` `,` ou tabulation · encodage utf-8,
 cp1252 ou latin-1 · temps en date/heure, `H:MM:SS`, ms, s ou min. Tout est détecté
 automatiquement.

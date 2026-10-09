@@ -55,6 +55,42 @@ def test_gl980_amp_settings_and_over_range():
     assert not m.is_thermal
 
 
+def test_gl980_mostly_text_columns(tmp_path):
+    """Lignes où la majorité des colonnes ne sont pas des nombres (cas réel refusé avant)."""
+    head = (
+        '"Model","GL980"\n"Title",""\n"Trigger Time","\'2026/06/01 17:01:39"\n\n"Data"\n'
+        '"NO.","Time","us","CH1","CH2","CH3","CH4","CH5","CH6","CH7","CH8",'
+        '"Logic1-4","Pulse1","Alarm1-10","Alarm11-20","AlarmPulse","AlarmOut"\n'
+        '"","","","V","V","degC","degC","degC","degC","degC","degC","","","","","",""\n'
+    )
+    rows = "".join(
+        '{},2026/06/01 17:01:{:02d},{},+1.234,+0.512,BURNOUT,BURNOUT,BURNOUT,BURNOUT,BURNOUT,+++++++,'
+        'LLLL,LLLL,LLLLLLLLLL,LLLLLLLLLL,LLLL,LLLL\n'.format(k + 1, 39 + k // 10, (k % 10) * 100000)
+        for k in range(150)
+    )
+    f = tmp_path / "Mes-_260601-170139.CSV"
+    f.write_text(head + rows)
+    m = load_measurement(f)
+    assert m.source == "Graphtec"
+    assert [c.label for c in m.channels] == ["Channel 1 (V)", "Channel 2 (V)"]
+    assert m.period_s == pytest.approx(0.1)  # colonne « us »
+    assert m.start == pd.Timestamp("2026-06-01 17:01:39")
+
+
+def test_unreadable_file_error_shows_diagnostic(tmp_path):
+    f = tmp_path / "bizarre.csv"
+    f.write_text("Rapport\nfoo;bar\nbaz;qux\nquux;corge\n")
+    with pytest.raises(LoadError, match="Diagnostic : encodage utf-8, séparateur point-virgule"):
+        load_measurement(f)
+
+
+def test_binary_export_is_explained(tmp_path):
+    f = tmp_path / "essai.GBD"
+    f.write_bytes(b"GBD\x00\x01\x02" * 100)
+    with pytest.raises(LoadError, match="binaire"):
+        load_measurement(f)
+
+
 def test_nanodac_spreadsheet_date_and_ascii_units():
     m = load_measurement(EXAMPLES / NANODAC)
     assert [c.label for c in m.channels] == ["T enceinte (°C)", "HR enceinte (%HR)", "Consigne T (°C)"]
@@ -259,6 +295,10 @@ def test_nan_values_are_kept():
 
 
 def test_format_hms():
+    from cleantrace.export import hms_column
+
+    values = [0, 61.5, -0.5, 1234.567]
+    assert list(hms_column(np.array(values))) == [format_hms(v) for v in values]
     assert format_hms(0) == "0:00:00"
     assert format_hms(61.5) == "1:01:30"
     assert format_hms(-0.5) == "-0:00:30"
@@ -287,11 +327,24 @@ def test_click_correction_on_figure():
     twin.plot([0, 1, 2, 3, 4], [1, 1, 9, 1, 1], gid="b")  # point abîmé sur l'axe secondaire
     fig.canvas.draw()
     calls = []
-    corrector = ClickCorrector(fig, lambda gid, idx, v: calls.append((gid, idx, v)))  # noqa: F841 (référence à garder : Matplotlib ne garde qu une référence faible)
+    corrector = ClickCorrector(fig, lambda gid, idx: calls.append((gid, idx)))  # noqa: F841 (référence à garder : Matplotlib ne garde qu une référence faible)
     px, py = twin.transData.transform((2, 9))
     event = MouseEvent("button_press_event", fig.canvas, px, py, button=1)
     fig.canvas.callbacks.process("button_press_event", event)
-    assert calls == [("b", 2, 1.0)]
+    assert calls == [("b", 2)]
+
+
+def test_decimation_keeps_spikes_and_maps_indices():
+    from cleantrace.plotting import decimate_indices
+
+    y = np.zeros(1_000_000)
+    y[123_457] = 999.0  # pic isolé au milieu d'un million de points
+    y[800_001] = -999.0
+    idx = decimate_indices(y, 0, len(y), buckets=1000)
+    assert len(idx) <= 2002
+    assert 123_457 in idx and 800_001 in idx  # aucun pic ne disparaît
+    assert idx[0] == 0 and idx[-1] == len(y) - 1
+    np.testing.assert_array_equal(decimate_indices(y, 10, 50), np.arange(10, 50))  # zoom : tout
 
 
 # ------------------------------------------------------------ session + US-06
@@ -315,6 +368,9 @@ def test_session_end_to_end(tmp_path):
 
     s.set_value(shunt, 10, 42.0)
     assert s.measurements[shunt[0]].data[shunt[1]].iloc[10] == 42.0
+    data = s.measurements[shunt[0]].data
+    expected = (data[shunt[1]].iloc[9] + data[shunt[1]].iloc[11]) / 2  # pas de temps régulier
+    assert s.correct_point(shunt, 10) == pytest.approx(expected)
     s.restore_raw([shunt])
     np.testing.assert_array_equal(s.measurements[shunt[0]].data[shunt[1]].to_numpy(), raw)
 

@@ -14,7 +14,6 @@ import numpy as np
 import pandas as pd
 
 from .loader import TIME_COL, Measurement
-from .plotting import format_hms
 
 Key = Tuple[str, str]  # (nom du fichier, libellé de la voie)
 
@@ -57,8 +56,19 @@ def merge_selection(
         for c in part.columns[1:]:
             out[c] = merged[c].to_numpy()
 
-    out.insert(1, "Temps (H:MM:SS)", [format_hms(t) for t in out[TIME_COL]])
+    out.insert(1, "Temps (H:MM:SS)", hms_column(out[TIME_COL].to_numpy()))
     return out
+
+
+def hms_column(minutes: np.ndarray) -> pd.Series:
+    """Version vectorisée de ``format_hms`` (rapide sur des millions de lignes)."""
+    total = np.round(np.asarray(minutes, dtype=float) * 60).astype(np.int64)
+    sign = pd.Series(np.where(total < 0, "-", ""))
+    total = np.abs(total)
+    hours = pd.Series(total // 3600).astype(str)
+    mins = pd.Series((total % 3600) // 60).astype(str).str.zfill(2)
+    secs = pd.Series(total % 60).astype(str).str.zfill(2)
+    return sign + hours + ":" + mins + ":" + secs
 
 
 def write_csv(df: pd.DataFrame, path, decimal: str = ",") -> Path:
