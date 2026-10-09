@@ -29,16 +29,19 @@ class Session:
 
     def load_files(
         self, paths: Iterable, progress: Optional[Callable[[str], None]] = None
-    ) -> Tuple[List[Measurement], List[str]]:
-        """Charge plusieurs fichiers. Renvoie (fichiers chargés, messages d'erreur)."""
+    ) -> Tuple[List[Measurement], List[Tuple[Path, str]]]:
+        """Charge plusieurs fichiers. Renvoie (fichiers chargés, [(chemin, message d'erreur)])."""
         loaded, errors = self.read_files(paths, progress)
         self.add_measurements(loaded)
         return loaded, errors
 
     def read_files(
         self, paths: Iterable, progress: Optional[Callable[[str], None]] = None
-    ) -> Tuple[List[Measurement], List[str]]:
-        """Lit les fichiers sans modifier la session (peut tourner en arrière-plan)."""
+    ) -> Tuple[List[Measurement], List[Tuple[Path, str]]]:
+        """Lit les fichiers sans modifier la session (peut tourner en arrière-plan).
+
+        Renvoie (fichiers chargés, [(chemin, message d'erreur)]).
+        """
         paths = list(paths)
         loaded, errors = [], []
         taken = set(self.measurements)
@@ -50,7 +53,7 @@ class Session:
             try:
                 loaded.append(load_measurement(path, name=name, progress=report))
             except LoadError as exc:
-                errors.append(str(exc))
+                errors.append((Path(path), str(exc)))
         return loaded, errors
 
     def add_measurements(self, measurements: Sequence[Measurement]) -> None:

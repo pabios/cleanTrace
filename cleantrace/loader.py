@@ -26,7 +26,9 @@ from typing import Callable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from .channels import Channel, make_channel, normalize_unit, split_name_unit
+from .channels import (
+    DEFAULT_CHANNEL_UNIT, OTHER, Channel, make_channel, normalize_unit, quantity_of, split_name_unit,
+)
 
 TIME_COL = "Time_min"
 
@@ -126,13 +128,20 @@ def load_measurement(
 
 
 def choose_reference(measurements: Sequence[Measurement]) -> Optional[Measurement]:
-    """Fichier de référence : le Graphset s'il existe, sinon le fichier le plus long."""
+    """Fichier de référence : le Graphset s'il existe, sinon le fichier le plus long.
+
+    Parmi les fichiers couvrant au moins la moitié de la durée maximale, on prend le plus finement
+    échantillonné : l'export se fait sur sa grille de temps, il ne faut pas perdre le
+    détail d'un enregistreur rapide (Graphtec 100 ms) au profit d'un lent (nanodac 1 min).
+    """
     if not measurements:
         return None
     for m in measurements:
         if m.source == "Graphset":
             return m
-    return max(measurements, key=lambda m: m.duration_min)
+    longest = max(m.duration_min for m in measurements)
+    candidates = [m for m in measurements if m.duration_min >= 0.5 * longest]
+    return min(candidates, key=lambda m: (m.period_s if math.isfinite(m.period_s) else math.inf, -m.duration_min))
 
 
 def align_time_axes(measurements: Sequence[Measurement]) -> Optional[Measurement]:
@@ -193,8 +202,10 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
             "(aucune ligne de mesure reconnue).\n\n{}".format(
                 path.name, _diagnostic(head, sep, n_cols, encoding))
         )
-    headers, units = _find_headers(head_rows, first_data, n_cols, decimal)
+    headers, units, aliases = _find_headers(head_rows, first_data, n_cols)
     signal_names = _graphtec_amp_settings(head_rows[:first_data])
+    source = _guess_source(path.name, head[:first_data])
+    default_unit = DEFAULT_CHANNEL_UNIT if source == "Graphtec" else ""
     for col, (_, unit) in signal_names.items():
         units.setdefault(col, unit)
 
@@ -220,8 +231,8 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
             column = _to_numeric(column, decimal)
         if column.notna().sum() == 0:
             continue  # colonne de texte (alarmes, messages...)
-        alias = signal_names.get(col, ("", ""))[0]
-        ch = make_channel(col, units.get(col), alias=alias)
+        alias = signal_names.get(col, ("", ""))[0] or aliases.get(col, "")
+        ch = make_channel(col, units.get(col), alias=alias, default_unit=default_unit)
         label = _unique(ch.label, values)
         if label != ch.label:
             ch = Channel(ch.raw_name, label, ch.unit, ch.quantity)
@@ -260,7 +271,7 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
     return Measurement(
         name=name,
         path=path,
-        source=_guess_source(path.name, head[:first_data]),
+        source=source,
         encoding=encoding,
         separator=sep,
         decimal=decimal,
@@ -347,12 +358,36 @@ def _is_time_header(header: str) -> bool:
 
 def _diagnostic(lines: List[str], sep: str, n_cols: int, encoding: str) -> str:
     """Résumé de ce qui a été lu, pour comprendre un fichier refusé."""
-    preview = [line[:100] + ("…" if len(line) > 100 else "") for line in lines if line.strip()][:8]
+    def short(line):
+        return line[:100] + ("…" if len(line) > 100 else "")
+
+    useful = [line for line in lines if line.strip()]
+    shown = useful[:4]
+    for k, line in enumerate(useful):  # lignes qui suivent le marqueur « Data »
+        if line.strip().strip('"').lower() == "data":
+            shown += ["…"] + useful[k:k + 4]
+            break
     return (
         "Diagnostic : encodage {}, séparateur {}, {} colonnes.\n"
-        "Premières lignes :\n{}".format(
-            encoding, SEPARATOR_NAMES.get(sep, repr(sep)), n_cols, "\n".join(preview))
+        "Extrait :\n{}\n\n"
+        "Envoyez un extrait de ce fichier pour une correction rapide.".format(
+            encoding, SEPARATOR_NAMES.get(sep, repr(sep)), n_cols, "\n".join(short(x) for x in shown))
     )
+
+
+def write_extract(path, out_path, head_lines: int = 80, tail_lines: int = 10) -> Path:
+    """Copie le début et la fin d'un fichier (octets bruts) : de quoi analyser son format."""
+    path, out_path = Path(path), Path(out_path)
+    with open(path, "rb") as fh:
+        head = fh.read(HEAD_BYTES).split(b"\n")[:head_lines]
+        size = path.stat().st_size
+        fh.seek(max(0, size - 64 * 1024))
+        tail = fh.read().split(b"\n")[-tail_lines - 1:]
+    with open(out_path, "wb") as out:
+        out.write(b"\n".join(head))
+        if size > HEAD_BYTES or len(head) >= head_lines:
+            out.write(b"\n[...]\n" + b"\n".join(tail))
+    return out_path
 
 
 def _detect_separator(sample: List[str], filename: str, head: List[str]) -> str:
@@ -406,34 +441,64 @@ def _find_first_data_row(rows, n_cols) -> Optional[int]:
 _UNIT_CELL_RE = re.compile(r"^[%°ºµA-Za-z/.\- ]{0,8}$")
 
 
+_ALARM_LABEL_RE = re.compile(r"^[A-Za-z]\d{3,}$")  # « A1234567890 » (GL860)
+
+
 def _looks_like_unit_row(row: List[str]) -> bool:
-    """Ligne d'unités sous les en-têtes : « "","","","V","mV","degC" »."""
+    """Ligne d'unités sous les en-têtes : « "","","","V","mV","degC" » ou « NO.,Time,ms,V,mA »."""
     cells = [c.strip().strip('"').strip("()[]") for c in row]
-    return any(cells) and all(_UNIT_CELL_RE.match(c) for c in cells)
+    return any(cells) and all(_UNIT_CELL_RE.match(c) or _ALARM_LABEL_RE.match(c) for c in cells)
 
 
-def _find_headers(rows, first_data, n_cols, decimal):
-    """Renvoie (noms de colonnes, unités venant d'une ligne d'unités séparée)."""
-    units = {}
-    header_row = None
-    if first_data >= 1 and len(rows[first_data - 1]) == n_cols:
-        candidate = rows[first_data - 1]
-        if _looks_like_unit_row(candidate) and first_data >= 2 and len(rows[first_data - 2]) == n_cols:
-            header_row = rows[first_data - 2]
-            unit_row = candidate
-            headers = _dedupe([h.strip().strip('"') for h in header_row])
-            for h, u in zip(headers, unit_row):
-                u = u.strip().strip('"').strip("()[]")
-                if u:
-                    units[h] = normalize_unit(u)
-            return headers, units
-        if not _is_data_row(candidate, n_cols):
-            header_row = candidate
-    if header_row is None:
-        headers = ["Voie {}".format(i + 1) for i in range(n_cols)]
-        headers[0] = "Temps"
-        return headers, units
-    return _dedupe([h.strip().strip('"') for h in header_row]), units
+def _find_headers(rows, first_data, n_cols):
+    """Renvoie (noms de colonnes, unités, alias) à partir des lignes qui précèdent les données.
+
+    Cas gérés : une ligne d'en-têtes ; en-têtes + ligne d'unités (Graphtec) ; en-tête
+    suivi d'un descriptif de voie en bout de ligne (nanodac :
+    « Date/Heure  Channel 2  (ENAN2);Group 1;M402-M210;°C »).
+    """
+    units, aliases = {}, {}
+    default = ["Temps"] + ["Voie {}".format(i + 1) for i in range(1, n_cols)]
+    if first_data < 1:
+        return default, units, aliases
+    candidate = [c.strip().strip('"') for c in rows[first_data - 1]]
+    extra = []
+    if len(candidate) > n_cols:  # descriptif en bout de ligne
+        extra = [c for c in candidate[n_cols:] if c]
+        candidate = candidate[:n_cols]
+    if len(candidate) != n_cols or _is_data_row(candidate, n_cols):
+        return default, units, aliases
+
+    if _looks_like_unit_row(candidate) and first_data >= 2 and len(rows[first_data - 2]) >= n_cols:
+        headers = _dedupe([h.strip().strip('"') for h in rows[first_data - 2][:n_cols]])
+        for h, u in zip(headers, candidate):
+            u = u.strip("()[]")
+            if u and not _ALARM_LABEL_RE.match(u):
+                units[h] = normalize_unit(u)
+        return headers, units, aliases
+
+    headers = _dedupe(candidate)
+    value_cols = [h for h in headers if not _is_time_header(h) and not _INDEX_NAME_RE.match(h)]
+    if extra and len(value_cols) == 1:
+        unit, alias = _channel_descriptor(extra)
+        if unit:
+            units[value_cols[0]] = unit
+        if alias:
+            aliases[value_cols[0]] = alias
+    return headers, units, aliases
+
+
+def _channel_descriptor(cells: List[str]) -> Tuple[str, str]:
+    """« (ENAN2);Group 1;M402-M210;°C » -> ("°C", "M402-M210")."""
+    tokens = [t.strip() for t in re.split(r"[;\t]", ";".join(cells)) if t.strip()]
+    for k in range(len(tokens) - 1, -1, -1):
+        unit = normalize_unit(tokens[k])
+        if quantity_of(unit) != OTHER or unit == "%":
+            alias = tokens[k - 1] if k >= 1 else ""
+            if alias.startswith("(") or re.match(r"^group\b", alias, re.IGNORECASE):
+                alias = ""
+            return unit, alias
+    return "", ""
 
 
 def _graphtec_amp_settings(preamble: List[List[str]]):

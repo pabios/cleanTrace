@@ -13,24 +13,35 @@ from cleantrace.plotting import format_hms
 from cleantrace.session import Session
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "exemples"
-ALL_EXAMPLES = ["essai_GL980.csv", "essai_nanodac.csv"]
-GL980 = "essai_GL980.csv"
-NANODAC = "essai_nanodac.csv"
-SHUNT = (GL980, "Channel 2 - Courant shunt (mV)")
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+# Maquettes calquées sur les vrais exports du labo (exemples/)
+GL980 = "GL980_Mes-_260601-170139.CSV"
+NANODAC = "nanodac_Rd_Z.txt"
+GL860 = EXAMPLES / "autres_formats" / "GL860_1s.CSV"
+ALL_EXAMPLES = [GL980, NANODAC]
+SHUNT = (GL980, "Channel 4 - I_s1 (A)")
+
+# Formats d'après les manuels constructeurs (tests/fixtures/)
+GL980_MANUEL = FIXTURES / "gl980_manuel.csv"
+NANODAC_MANUEL = FIXTURES / "nanodac_manuel.csv"
 
 
 # ------------------------------------------------------------------- US-01 import
 
 
 @pytest.mark.parametrize(
-    "filename, source, sep, decimal, period_s, n_channels",
+    "path, source, sep, decimal, period_s, n_channels",
     [
-        (GL980, "Graphtec", ",", ".", 0.5, 3),
-        (NANODAC, "Nanodac", "\t", ",", 10.0, 3),
+        (EXAMPLES / GL980, "Graphtec", ";", ",", 0.1, 6),
+        (EXAMPLES / NANODAC, "Nanodac", "\t", ",", 60.0, 1),
+        (GL860, "Graphtec", ",", ".", 1.0, 10),
+        (GL980_MANUEL, "Graphtec", ",", ".", 0.5, 3),
+        (NANODAC_MANUEL, "Nanodac", "\t", ",", 10.0, 3),
     ],
 )
-def test_import_examples(filename, source, sep, decimal, period_s, n_channels):
-    m = load_measurement(EXAMPLES / filename)
+def test_import_formats(path, source, sep, decimal, period_s, n_channels):
+    m = load_measurement(path)
     assert m.source == source
     assert m.separator == sep
     assert m.decimal == decimal
@@ -38,21 +49,95 @@ def test_import_examples(filename, source, sep, decimal, period_s, n_channels):
     assert len(m.channels) == n_channels
     assert m.start is not None
     assert m.data[TIME_COL].iloc[0] == 0
-    assert m.duration_min == pytest.approx(120, abs=1.1)
+
+
+def test_real_gl980_layout():
+    """Export GL980 réel : Vendor/Model…, AMP settings, XY, Position/Vernier, Data."""
+    m = load_measurement(EXAMPLES / GL980)
+    assert [c.label for c in m.channels] == [
+        "Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)", "Channel 5 - I_s2 (A)",
+        "Channel 6 - U_s1&2 (V)", "Channel 7 - I_s3 (A)", "Channel 8 - I_s4 (A)",
+    ]
+    assert m.start == pd.Timestamp("2026-06-01 17:01:39")  # colonnes Date + Time + us
+    assert m.duration_min == pytest.approx(40, abs=0.01)
+
+
+def test_real_nanodac_unit_from_descriptor():
+    """« Date/Heure  Channel 2  (ENAN2);Group 1;M402-M210;°C » : c'est une température."""
+    m = load_measurement(EXAMPLES / NANODAC)
+    assert [c.label for c in m.channels] == ["Channel 2 - M402-M210 (°C)"]
+    assert m.channels[0].quantity == TEMPERATURE
+    assert m.is_thermal
+    assert m.start == pd.Timestamp("2026-06-01 16:57:00")  # année sur 2 chiffres
+
+
+def test_real_gl860_double_header():
+    """En-têtes sur deux lignes : No.,Date&Time,ms,CH1… puis NO.,Time,ms,V,mA…,A1234567890."""
+    m = load_measurement(GL860)
+    labels = [c.label for c in m.channels]
+    assert labels[:3] == ["Channel 1 - U_alim (V)", "Channel 2 - I_spcC1 (mA)", "Channel 3 (mA)"]
+    assert labels[-2:] == ["Channel 11 - I_LH7 (mA)", "Channel 13 - I_LB7 (mA)"]
+    assert m.start == pd.Timestamp("2026-09-10 14:53:39")
 
 
 def test_gl980_amp_settings_and_over_range():
-    m = load_measurement(EXAMPLES / GL980)
+    m = load_measurement(GL980_MANUEL)
     # noms de signaux et unités du tableau « Amp settings », voie CH4 (Off) ignorée,
     # colonnes d'alarme (texte) ignorées
     assert [c.label for c in m.channels] == [
-        "Channel 1 - Tension cellule (V)", SHUNT[1], "Channel 3 - T cellule (°C)",
+        "Channel 1 - Tension cellule (V)", "Channel 2 - Courant shunt (mV)", "Channel 3 - T cellule (°C)",
     ]
     assert m.start == pd.Timestamp("2026-10-01 09:00:30")
     assert m.period_s == pytest.approx(0.5)  # colonne « ms » prise en compte
-    assert m.data[SHUNT[1]].isna().sum() == 12  # « +++++++ » / « ------- »
+    assert m.data["Channel 2 - Courant shunt (mV)"].isna().sum() == 12  # « +++++++ » / « ------- »
     assert any("hors échelle" in w for w in m.warnings)
     assert not m.is_thermal
+
+
+def test_nanodac_spreadsheet_date_and_ascii_units():
+    m = load_measurement(NANODAC_MANUEL)
+    assert [c.label for c in m.channels] == ["T enceinte (°C)", "HR enceinte (%HR)", "Consigne T (°C)"]
+    assert m.start == pd.Timestamp("2026-10-01 09:00:00")  # 46296,375 jours depuis 1899
+    assert m.is_thermal
+
+
+def test_nanodac_text_date_comma_separator(tmp_path):
+    f = tmp_path / "nanodac_texte.csv"
+    f.write_bytes(
+        b"Instrument,nanodac\r\n\r\n"
+        b"Date/Time,Four Z1,Messages\r\n,degC,\r\n"
+        b"01/10/2026 09:00:00,25.1,\r\n"
+        b"01/10/2026 09:00:01,25.2,Alarm 1 on\r\n"
+        b"01/10/2026 09:00:02,25.3,\r\n"
+    )
+    m = load_measurement(f)
+    assert [c.label for c in m.channels] == ["Four Z1 (°C)"]
+    assert m.start == pd.Timestamp("2026-10-01 09:00:00")
+    assert m.period_s == 1.0
+
+
+def test_reference_prefers_fine_sampling_among_longest():
+    """Le nanodac (1 min) couvre un peu plus large, mais l'export doit garder les 100 ms du GL980."""
+    ms = [load_measurement(EXAMPLES / f) for f in ALL_EXAMPLES]
+    assert ms[1].duration_min > ms[0].duration_min
+    ref = align_time_axes(ms)
+    assert ref.name == GL980
+    assert ms[1].data[TIME_COL].iloc[0] == pytest.approx(-4.65)  # nanodac démarre 4 min 39 s avant
+
+
+def test_reference_is_longest_file():
+    ms = [load_measurement(p) for p in (GL980_MANUEL, NANODAC_MANUEL)]
+    assert align_time_axes(ms).path == GL980_MANUEL
+    assert ms[1].data[TIME_COL].iloc[0] == pytest.approx(-0.5)  # démarre 30 s avant
+
+
+def test_graphset_is_preferred_reference(tmp_path):
+    a = tmp_path / "graphset.csv"
+    b = tmp_path / "long.csv"
+    a.write_text("Temps (s);U (V)\n0;1\n1;1\n2;1\n3;1\n")
+    b.write_text("Temps (s);U (V)\n0;1\n1;1\n2;1\n3;1\n4;1\n5;1\n")
+    ms = [load_measurement(a), load_measurement(b)]
+    assert align_time_axes(ms).path == a
 
 
 def test_gl980_mostly_text_columns(tmp_path):
@@ -89,45 +174,6 @@ def test_binary_export_is_explained(tmp_path):
     f.write_bytes(b"GBD\x00\x01\x02" * 100)
     with pytest.raises(LoadError, match="binaire"):
         load_measurement(f)
-
-
-def test_nanodac_spreadsheet_date_and_ascii_units():
-    m = load_measurement(EXAMPLES / NANODAC)
-    assert [c.label for c in m.channels] == ["T enceinte (°C)", "HR enceinte (%HR)", "Consigne T (°C)"]
-    assert m.start == pd.Timestamp("2026-10-01 09:00:00")  # 46296,375 jours depuis 1899
-    assert m.is_thermal
-
-
-def test_nanodac_text_date_comma_separator(tmp_path):
-    f = tmp_path / "nanodac_texte.csv"
-    f.write_bytes(
-        b"Instrument,nanodac\r\n\r\n"
-        b"Date/Time,Four Z1,Messages\r\n,degC,\r\n"
-        b"01/10/2026 09:00:00,25.1,\r\n"
-        b"01/10/2026 09:00:01,25.2,Alarm 1 on\r\n"
-        b"01/10/2026 09:00:02,25.3,\r\n"
-    )
-    m = load_measurement(f)
-    assert [c.label for c in m.channels] == ["Four Z1 (°C)"]
-    assert m.start == pd.Timestamp("2026-10-01 09:00:00")
-    assert m.period_s == 1.0
-
-
-def test_alignment_reference_is_longest_file():
-    ms = [load_measurement(EXAMPLES / f) for f in ALL_EXAMPLES]
-    ref = align_time_axes(ms)
-    assert ref.name == GL980
-    nanodac = ms[1]
-    assert nanodac.data[TIME_COL].iloc[0] == pytest.approx(-0.5)  # démarre 30 s avant
-
-
-def test_graphset_is_preferred_reference(tmp_path):
-    a = tmp_path / "graphset.csv"
-    b = tmp_path / "long.csv"
-    a.write_text("Temps (s);U (V)\n0;1\n1;1\n2;1\n3;1\n")
-    b.write_text("Temps (s);U (V)\n0;1\n1;1\n2;1\n3;1\n4;1\n5;1\n")
-    ms = [load_measurement(a), load_measurement(b)]
-    assert align_time_axes(ms).path == a
 
 
 def test_reference_is_longest_without_graphset(tmp_path):
@@ -186,7 +232,7 @@ def test_invalid_files(tmp_path, content, message):
 @pytest.mark.parametrize(
     "raw, label, quantity",
     [
-        ("CH1", "Channel 1 (mV)", VOLTAGE),
+        ("CH1", "Channel 1", "autre"),  # unité inconnue : jamais supposée hors Graphtec
         ("CH03[V]", "Channel 3 (V)", VOLTAGE),
         ("Courant (mA)", "Courant (mA)", CURRENT),
         ("Température", "Température (°C)", TEMPERATURE),
@@ -198,6 +244,10 @@ def test_channel_labels(raw, label, quantity):
     ch = make_channel(raw)
     assert ch.label == label
     assert ch.quantity == quantity
+
+
+def test_graphtec_channel_default_unit():
+    assert make_channel("CH1", default_unit="mV").label == "Channel 1 (mV)"
 
 
 # --------------------------------------------------------------- US-03 nettoyage
@@ -355,16 +405,16 @@ def test_session_end_to_end(tmp_path):
     loaded, errors = s.load_files([EXAMPLES / f for f in ALL_EXAMPLES])
     assert len(loaded) == 2 and not errors
     keys = s.all_keys()
-    assert len(keys) == 6
+    assert len(keys) == 7
 
     shunt = SHUNT
     raw = s.measurements[shunt[0]].data[shunt[1]].to_numpy().copy()
     report = s.apply_cleaning([shunt], CleaningOptions())
     cleaned = s.measurements[shunt[0]].data[shunt[1]].to_numpy()
     assert report.peak_points > 0 and report.noise_points > 0
-    assert np.isnan(cleaned).sum() == 0  # valeurs hors échelle réparées
-    assert np.nanmax(cleaned) < 120  # plus de saturation à 1000 mV
-    assert np.nanmax(cleaned) > 95  # mais les paliers de charge (100 mV) sont intacts
+    assert np.nanmax(cleaned) < 5.1  # plus de saturation à 10 A
+    assert np.nanmax(cleaned) > 4.95  # mais les paliers de charge (5 A) sont intacts
+    assert np.nanmin(cleaned) < -4.95
 
     s.set_value(shunt, 10, 42.0)
     assert s.measurements[shunt[0]].data[shunt[1]].iloc[10] == 42.0
@@ -376,8 +426,8 @@ def test_session_end_to_end(tmp_path):
 
     # seul le fichier de l'enceinte suit le curseur de décalage
     shiftable = {sr.label: sr.shiftable for sr in s.series(keys)}
-    assert shiftable["T enceinte (°C) — essai_nanodac.csv"]
-    assert not shiftable["Channel 3 - T cellule (°C) — essai_GL980.csv"]
+    assert shiftable["Channel 2 - M402-M210 (°C) — nanodac_Rd_Z.txt"]
+    assert not any(v for k, v in shiftable.items() if k.endswith(GL980))
 
     s.time_offset_min = -4
     out = tmp_path / "export.csv"
@@ -386,7 +436,7 @@ def test_session_end_to_end(tmp_path):
     text = out.read_text(encoding="utf-8-sig")
     header = text.splitlines()[0].split(";")
     assert header[:2] == ["Time_min", "Temps (H:MM:SS)"]
-    assert "essai_nanodac.csv | T enceinte (°C)" in header
+    assert "nanodac_Rd_Z.txt | Channel 2 - M402-M210 (°C)" in header
     back = pd.read_csv(out, sep=";", decimal=",", encoding="utf-8-sig")
     assert back.shape == df.shape
 
@@ -396,4 +446,15 @@ def test_session_reports_bad_file(tmp_path):
     bad.write_text("")
     s = Session()
     loaded, errors = s.load_files([EXAMPLES / NANODAC, bad])
-    assert len(loaded) == 1 and len(errors) == 1 and "vide.csv" in errors[0]
+    assert len(loaded) == 1 and len(errors) == 1
+    assert errors[0][0] == bad and "vide.csv" in errors[0][1]
+
+
+def test_write_extract_keeps_head_and_tail(tmp_path):
+    from cleantrace.loader import write_extract
+
+    out = write_extract(EXAMPLES / GL980, tmp_path / "extrait.txt")
+    text = out.read_bytes().decode("cp1252")
+    assert text.startswith("Vendor;GRAPHTEC Corporation")
+    assert "Number;Date;Time;us;CH3" in text  # début des données inclus
+    assert "[...]" in text and out.stat().st_size < 20_000

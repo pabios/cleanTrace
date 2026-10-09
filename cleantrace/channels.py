@@ -62,7 +62,8 @@ _QUANTITY_BY_UNIT = {
     "%HR": HUMIDITY,
 }
 
-# Unité par défaut des voies génériques "CHx" (centrales type Graphtec)
+# Unité par défaut des voies "CHx" sans unité d'un Graphtec (jamais supposée ailleurs :
+# une voie "Channel 2" de nanodac peut très bien être une température)
 DEFAULT_CHANNEL_UNIT = "mV"
 
 
@@ -101,10 +102,13 @@ def quantity_of(unit: str) -> str:
     return _QUANTITY_BY_UNIT.get(unit, OTHER)
 
 
-def make_channel(raw: str, unit: Optional[str] = None, alias: str = "") -> Channel:
+def make_channel(
+    raw: str, unit: Optional[str] = None, alias: str = "", default_unit: str = ""
+) -> Channel:
     """Construit une voie avec un libellé lisible à partir du nom brut de la colonne.
 
     ``alias`` : nom donné à la voie dans la centrale (ex. « Signal name » Graphtec).
+    ``default_unit`` : unité des voies « CHx » sans unité connue (mV pour un Graphtec).
     """
     name, found_unit = split_name_unit(raw)
     unit = normalize_unit(unit) if unit else found_unit
@@ -112,7 +116,7 @@ def make_channel(raw: str, unit: Optional[str] = None, alias: str = "") -> Chann
     match = _CHANNEL_RE.match(name)
     if match:
         name = "Channel {}".format(int(match.group(1)))
-        unit = unit or DEFAULT_CHANNEL_UNIT
+        unit = unit or default_unit
     elif not unit:
         if _TEMP_RE.search(name):
             unit = "°C"

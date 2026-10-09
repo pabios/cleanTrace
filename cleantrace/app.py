@@ -26,6 +26,7 @@ from . import __version__
 from .cleaning import CleaningOptions
 from .editing import ClickCorrector
 from .export import Key
+from .loader import write_extract
 from .plotting import PlotManager
 from .session import Session
 
@@ -206,8 +207,26 @@ class CleanTraceApp:
             if notes:
                 messagebox.showwarning("Import", "Fichiers chargés avec remarques :\n\n" + "\n".join(notes),
                                        parent=self.root)
-        if errors:
-            messagebox.showerror("Fichier non conforme", "\n\n".join(errors), parent=self.root)
+        for path, message in errors:
+            self._report_unreadable(path, message)
+
+    def _report_unreadable(self, path: Path, message: str) -> None:
+        """Fichier refusé : explication + extrait à envoyer pour adapter le logiciel."""
+        if not messagebox.askyesno(
+            "Fichier non conforme",
+            message + "\n\nEnregistrer un extrait de ce fichier (début et fin, quelques Ko) "
+            "pour l'envoyer au développeur ?",
+            icon=messagebox.ERROR, parent=self.root,
+        ):
+            return
+        target = filedialog.asksaveasfilename(
+            parent=self.root, title="Enregistrer l'extrait",
+            initialfile="{}_extrait.txt".format(path.stem), defaultextension=".txt",
+            filetypes=[("Texte", "*.txt")],
+        )
+        if target:
+            write_extract(path, target)
+            messagebox.showinfo("Extrait enregistré", "Extrait enregistré :\n{}".format(target), parent=self.root)
 
     def select_all(self, state: bool) -> None:
         if self.busy:

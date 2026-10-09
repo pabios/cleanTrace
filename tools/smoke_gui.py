@@ -20,7 +20,7 @@ from cleantrace import app as app_module  # noqa: E402
 
 OUT = Path(sys.argv[1] if len(sys.argv) > 1 else ".dev-out")
 OUT.mkdir(parents=True, exist_ok=True)
-EXAMPLES = sorted(str(p) for p in (ROOT / "exemples").glob("essai_*"))
+EXAMPLES = [str(ROOT / "exemples" / f) for f in ("GL980_Mes-_260601-170139.CSV", "nanodac_Rd_Z.txt")]
 
 # Les boîtes de dialogue bloqueraient le test : on les remplace.
 dialogs = []
@@ -66,7 +66,7 @@ def main():
 
     # Afficher uniquement le shunt Graphtec + la température enceinte
     gui.select_all(False)
-    shunt = ("essai_GL980.csv", "Channel 2 - Courant shunt (mV)")
+    shunt = ("GL980_Mes-_260601-170139.CSV", "Channel 4 - I_s1 (A)")
     gui._checked[shunt] = True
     gui._refresh_checkmarks()
     gui.redraw()
@@ -80,14 +80,14 @@ def main():
     # Correction au clic : on abîme un point, puis on clique dessus sur le canevas
     df = gui.session.measurements[shunt[0]].data
     idx = 2000
-    gui.session.set_value(shunt, idx, 60.0)
+    gui.session.set_value(shunt, idx, 8.0)
     gui.redraw()
     pump(root)
     line = gui.figure.axes[0].get_lines()[0]
     ax = line.axes
     ax.set_xlim(df["Time_min"].iloc[idx] - 0.2, df["Time_min"].iloc[idx] + 0.2)
     gui.canvas.draw()
-    px, py = ax.transData.transform((df["Time_min"].iloc[idx], 60.0))
+    px, py = ax.transData.transform((df["Time_min"].iloc[idx], 8.0))
     widget = gui.canvas.get_tk_widget()
     height = widget.winfo_height()
     widget.event_generate("<Motion>", x=int(px), y=int(height - py))
@@ -96,7 +96,7 @@ def main():
     pump(root)
     corrected = df[shunt[1]].iloc[idx]
     print("point corrigé :", corrected, "|", gui.status.get())
-    assert corrected != 60.0, "la correction au clic n'a pas eu lieu"
+    assert corrected != 8.0, "la correction au clic n'a pas eu lieu"
     shot(root, "4_correction_clic.png")
 
     # Toutes les voies + décalage de la température de -4 min

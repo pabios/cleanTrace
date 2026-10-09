@@ -7,7 +7,7 @@ climatique…), les recale sur un même axe temps, supprime le bruit et les pics
 saturation, puis exporte un CSV propre.
 
 ![Signal brut](docs/captures/1-signal-brut.png)
-*Avant : pics de saturation parasites à ±1000 mV.*
+*Avant : pics de saturation parasites à ±10 A.*
 
 ![Signal nettoyé](docs/captures/2-signal-nettoye.png)
 *Après « Nettoyer » : les créneaux restent intacts et le repos est à 0.*
@@ -49,9 +49,10 @@ python main.py
 
 ## Formats reconnus
 
-Prévu pour les enregistreurs **Graphtec GL980** (export CSV, tableau « Amp settings »,
-valeurs hors échelle `+++++++`) et **Eurotherm nanodac** (archive CSV, date en texte ou
-en nombre Excel, tabulation ou virgule). Un exemple de chacun est fourni dans `exemples/`.
+Prévu pour les enregistreurs **Graphtec GL980 / GL860** (export CSV avec bloc
+« AMP settings », colonnes Date / Time / us, valeurs hors échelle `+++++++`) et
+**Eurotherm nanodac** (date en texte ou en nombre Excel, unité dans le descriptif de voie).
+Des maquettes calquées sur de vrais exports sont fournies dans `exemples/`.
 
 Les gros fichiers (plusieurs millions de lignes) sont lus en quelques secondes, avec un
 indicateur de chargement.
@@ -60,7 +61,8 @@ Plus généralement : CSV, TXT ou DAT · séparateur `;` `,` ou tabulation · en
 cp1252 ou latin-1 · temps en date/heure, `H:MM:SS`, ms, s ou min. Tout est détecté
 automatiquement.
 
-Un fichier ne s'ouvre pas ? Ouvrez une issue en joignant le fichier (quelques lignes suffisent).
+Un fichier ne s'ouvre pas ? L'application propose d'en **enregistrer un extrait** (début et fin,
+quelques Ko) : joignez-le à une issue.
 
 ---
 

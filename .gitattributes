@@ -1,4 +1,6 @@
 # Fichiers de mesure : garder les octets exacts (fins de ligne Windows des enregistreurs)
-exemples/*.csv -text
-exemples/*.txt -text
-exemples/*.dat -text
+exemples/**/*.csv -text
+exemples/**/*.CSV -text
+exemples/**/*.txt -text
+exemples/**/*.dat -text
+tests/fixtures/* -text
