@@ -1,0 +1,4 @@
+# Fichiers de mesure : garder les octets exacts (fins de ligne Windows des enregistreurs)
+exemples/*.csv -text
+exemples/*.txt -text
+exemples/*.dat -text
