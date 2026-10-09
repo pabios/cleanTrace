@@ -129,3 +129,66 @@ def test_excel_resaved_without_seconds(tmp_path):
     assert m.data[TIME_COL].iloc[-1] == pytest.approx(149 / 60)
     assert any("recalculé" in w for w in m.warnings)
     assert [c.label for c in m.channels] == ["Channel 1 (V)", "Channel 2 (mA)"]
+
+
+def write_excel_resaved(path, n=N, declared=None, padded=True, utf8_bom=False):
+    """Fichier GL980 converti dans Excel (Données > Convertir) puis « Enregistrer sous » CSV.
+
+    Ce qu'Excel change : séparateur « ; » et décimale « , » (Windows français), signes « + »
+    et zéros finaux supprimés (« +5,0000 » -> « 5 »), très petites valeurs en notation
+    scientifique, dates jj/mm/aaaa, lignes courtes complétées par des « ; ».
+    """
+    u, i1, i2 = reference_values()
+    reps = int(np.ceil(n / N))
+    u, i1, i2 = (np.tile(x, reps)[:n] for x in (u, i1, i2))
+    i2 = i2.copy()
+    i2[7] = 0.000012  # -> « 1,2E-05 »
+    stamps = START + pd.to_timedelta(np.arange(n) * 0.1, unit="s")
+
+    def xl(v):
+        text = "{:.10G}".format(v)
+        if "E" in text:
+            mant, exp = text.split("E")
+            text = "{}E{}{:02d}".format(mant, exp[0], abs(int(exp)))
+        return text.replace(".", ",")
+
+    pre = [
+        ["Vendor", "GRAPHTEC Corporation"], ["Model", "GL980"], ["Version", "Ver1,35", "Rev0001"],
+        ["Sampling interval", "100ms"], ["Total data points", str(declared or n)],
+        ["Start time", "01/06/2026", "17:01:39"], ["End time", "03/06/2026", "16:45:35"],
+        ["Trigger time", "01/06/2026", "17:01:39"], ["AMP settings"],
+        ["CH", "Signal name", "Amp", "Input", "Range", "Filter", "Span", "", "Unit"],
+        ["CH3", "U_alim", "M", "DC", "50V", "Off", "25", "-25", "V"],
+        ["CH4", "I_s1", "M", "DC", "50mV", "Off", "10", "-10", "A"],
+        ["CH5", "I_s2", "M", "DC", "50mV", "Off", "10", "-10", "A"],
+        ["Data"], ["Number", "Date", "Time", "us", "CH3", "CH4", "CH5", "Alarm", "AlarmOut"],
+    ]
+    width = 9
+    lines = [";".join(r + ([""] * (width - len(r)) if padded else [])) for r in pre]
+    dates, hours, micro = stamps.strftime("%d/%m/%Y"), stamps.strftime("%H:%M:%S"), stamps.microsecond
+    for k in range(n):
+        lines.append(";".join([str(k + 1), dates[k], hours[k], str(micro[k]), xl(u[k]), xl(i1[k]), xl(i2[k]),
+                               "LLLLLLLLLL", "LLLL"]))
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8-sig" if utf8_bom else "cp1252"))
+    return path, (u, i1, i2)
+
+
+@pytest.mark.parametrize("padded, utf8_bom", [(True, False), (False, False), (True, True)])
+def test_excel_converted_then_resaved(tmp_path, padded, utf8_bom):
+    path, (u, i1, i2) = write_excel_resaved(tmp_path / "Mes-_260601-170139.csv", padded=padded, utf8_bom=utf8_bom)
+    assert "1,2E-05" in path.read_bytes().decode("utf-8-sig" if utf8_bom else "cp1252")
+    m = load_measurement(path)
+    assert [c.label for c in m.channels] == LABELS
+    assert m.start == START and m.period_s == pytest.approx(0.1) and len(m.data) == N
+    np.testing.assert_allclose(m.data[LABELS[0]].to_numpy(), u)
+    np.testing.assert_allclose(m.data[LABELS[1]].to_numpy(), i1)
+    np.testing.assert_allclose(m.data[LABELS[2]].to_numpy(), i2)
+    assert not any("tronqué" in w for w in m.warnings)
+
+
+def test_excel_row_limit_is_reported(tmp_path):
+    """Excel s'arrête à 1 048 576 lignes : un fichier réenregistré peut avoir perdu des mesures."""
+    path, _ = write_excel_resaved(tmp_path / "Mes-_260601-170139.csv", n=1000, declared=1718363)
+    m = load_measurement(path)
+    assert len(m.data) == 1000
+    assert any("1 718 363" in w and "1 000" in w for w in m.warnings)

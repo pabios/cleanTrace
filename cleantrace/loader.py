@@ -273,6 +273,15 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
         raise LoadError("La colonne temps du fichier « {} » est illisible.".format(path.name))
 
     msgs = []
+    declared = _declared_count(head_rows[:first_data])
+    if declared and declared > len(df) * 1.001 + 1:
+        msgs.append(
+            "Le fichier annonce {} points mais n'en contient que {} : il est incomplet{}. "
+            "Utilisez de préférence le fichier d'origine de l'appareil.".format(
+                _thousands(declared), _thousands(len(df)),
+                " (probablement tronqué par Excel, limité à 1 048 576 lignes)"
+                if len(df) + first_data >= EXCEL_MAX_ROWS - 50 or declared > EXCEL_MAX_ROWS else "")
+        )
     if rebuilt:
         msgs.append("Horodatage moins précis que la période d'échantillonnage ({}) : temps "
                     "recalculé à partir de la période (fichier réenregistré par Excel ?).".format(
@@ -420,6 +429,24 @@ def _needs_comma_merge(rows: List[List[str]]) -> bool:
 
 def _merge_decimal_commas(lines: List[str]) -> List[str]:
     return [_MERGE_COMMA_RE.sub(r"\1\2.\3", line) for line in lines]
+
+
+EXCEL_MAX_ROWS = 1048576
+
+
+def _declared_count(preamble: List[List[str]]) -> int:
+    """Nombre de points annoncé dans l'en-tête (« Total data points,1718363 »)."""
+    for row in preamble:
+        cells = [c.strip().strip('"') for c in row if c.strip()]
+        if len(cells) >= 2 and re.match(r"^(total data|number of data|nombre de points)", cells[0], re.IGNORECASE):
+            digits = re.sub(r"[\s.,]", "", cells[1])
+            if digits.isdigit():
+                return int(digits)
+    return 0
+
+
+def _thousands(n: int) -> str:
+    return "{:,}".format(n).replace(",", " ")
 
 
 def _declared_sampling(preamble: List[List[str]]) -> float:
