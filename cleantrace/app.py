@@ -51,7 +51,7 @@ class CleanTraceApp:
         self.busy = False  # un traitement long tourne en arrière-plan
         self._action_buttons: List[ttk.Button] = []
 
-        root.title(APP_TITLE)
+        root.title("{}  (v{})".format(APP_TITLE, __version__))
         root.geometry("1400x860")
         root.minsize(1000, 640)
         root.report_callback_exception = self._on_unexpected_error
