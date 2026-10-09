@@ -57,9 +57,10 @@ Des maquettes calquées sur de vrais exports sont fournies dans `exemples/`.
 Les gros fichiers (plusieurs millions de lignes) sont lus en quelques secondes, avec un
 indicateur de chargement.
 
-Plus généralement : CSV, TXT ou DAT · séparateur `;` `,` ou tabulation · encodage utf-8,
-cp1252 ou latin-1 · temps en date/heure, `H:MM:SS`, ms, s ou min. Tout est détecté
-automatiquement.
+Les fichiers bruts de l'appareil s'ouvrent directement, sans passer par Excel : séparateur
+`,` `;` ou tabulation et décimale `.` ou `,` dans toutes les combinaisons (y compris
+`,` + `,`), avec ou sans guillemets, utf-8 / cp1252 / utf-16, fichiers réenregistrés par Excel.
+Temps en date/heure, `H:MM:SS`, ms, s ou min. Tout est détecté automatiquement.
 
 Un fichier ne s'ouvre pas ? L'application propose d'en **enregistrer un extrait** (début et fin,
 quelques Ko) : joignez-le à une issue.

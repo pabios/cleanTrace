@@ -33,7 +33,7 @@ NANODAC_MANUEL = FIXTURES / "nanodac_manuel.csv"
 @pytest.mark.parametrize(
     "path, source, sep, decimal, period_s, n_channels",
     [
-        (EXAMPLES / GL980, "Graphtec", ";", ",", 0.1, 6),
+        (EXAMPLES / GL980, "Graphtec", ",", ",", 0.1, 6),
         (EXAMPLES / NANODAC, "Nanodac", "\t", ",", 60.0, 1),
         (GL860, "Graphtec", ",", ".", 1.0, 10),
         (GL980_MANUEL, "Graphtec", ",", ".", 0.5, 3),
@@ -455,6 +455,6 @@ def test_write_extract_keeps_head_and_tail(tmp_path):
 
     out = write_extract(EXAMPLES / GL980, tmp_path / "extrait.txt")
     text = out.read_bytes().decode("cp1252")
-    assert text.startswith("Vendor;GRAPHTEC Corporation")
-    assert "Number;Date;Time;us;CH3" in text  # début des données inclus
+    assert text.startswith("Vendor,GRAPHTEC Corporation")
+    assert "Number,Date,Time,us,CH3" in text  # début des données inclus
     assert "[...]" in text and out.stat().st_size < 20_000

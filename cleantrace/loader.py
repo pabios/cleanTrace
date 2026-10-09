@@ -15,6 +15,7 @@ calculé par rapport au fichier de référence (Graphset, sinon le fichier le pl
 from __future__ import annotations
 
 import csv
+import io
 import math
 import re
 import warnings
@@ -45,8 +46,16 @@ _SUBSECOND_FACTOR = {"ms": 1e-3, "msec": 1e-3, "us": 1e-6, "µs": 1e-6}
 # Valeurs hors échelle écrites par les centrales à la place d'un nombre
 _OVER_RANGE_RE = re.compile(r"^([+\-])\1{2,}$|^(burnout|over|under|overrange|underrange|-?ovf|err)$", re.IGNORECASE)
 _INDEX_NAME_RE = re.compile(r"^(no\.?|n°|num(ber|[ée]ro)?|index|#|id|ligne)$", re.IGNORECASE)
-_NUMBER_RE = re.compile(r"^[+-]?(\d+([.,]\d*)?|[.,]\d+)([eE][+-]?\d+)?$")
-_DECIMAL_COMMA_RE = re.compile(r"^[+-]?\d*,\d+([eE][+-]?\d+)?$")
+_NUMBER_RE = re.compile(r"^[+-]?\s*(\d+([.,]\d*)?|[.,]\d+)([eE][+-]?\d+)?$")  # « + 24.003 » accepté
+_DECIMAL_COMMA_RE = re.compile(r"^[+-]?\s*\d*,\d+([eE][+-]?\d+)?$")
+# Séparateur « , » ET décimale « , » sans guillemets : « …,+24,003,-1,5,… ». Les valeurs
+# Graphtec portent toujours un signe : « +24 » suivi de « 003 » est un seul nombre.
+_SIGNED_INT_RE = re.compile(r"^[+-]\s*\d+$")
+_DIGITS_RE = re.compile(r"^\d+([eE][+-]?\d+)?$")
+_POINT_DECIMAL_RE = re.compile(r"^[+-]?\s*\d+\.\d+")
+_MERGE_COMMA_RE = re.compile(r"(^|,)([+-] *\d+),(\d+(?:[eE][+-]?\d+)?)(?=,|$)", re.MULTILINE)
+_WHOLE_QUOTED_RE = re.compile(r'^"(.*)"$', re.MULTILINE)
+_SAMPLING_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(us|µs|ms|s|sec|min|h)\s*$", re.IGNORECASE)
 _DATETIME_LIKE_RE = re.compile(r"^\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}|^\d{1,3}:\d{2}")
 _DURATION_RE = re.compile(r"^\d+:\d{2}:\d{2}([.,]\d+)?$")
 _YEAR_FIRST_RE = re.compile(r"^\d{4}[/\-.]")
@@ -190,12 +199,21 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
         raise LoadError("Le fichier « {} » est vide.".format(path.name))
 
     sample = [line for line in head[-300:] + tail[-300:] if line.strip()]
+    unwrap = _lines_fully_quoted(sample)
+    if unwrap:
+        head, tail, sample = (_unwrap_quotes(x) for x in (head, tail, sample))
     sep = _detect_separator(sample, path.name, head)
+    merge_commas = sep == "," and _needs_comma_merge(list(csv.reader(sample, delimiter=sep)))
+    if merge_commas:
+        head, tail, sample = (_merge_decimal_commas(x) for x in (head, tail, sample))
     head_rows = list(csv.reader(head, delimiter=sep))
-    n_cols = _modal_field_count(list(csv.reader(sample, delimiter=sep)))
-    decimal = _detect_decimal(list(csv.reader(sample, delimiter=sep)), sep, n_cols)
+    sample_rows = list(csv.reader(sample, delimiter=sep))
+    n_cols = _modal_field_count(sample_rows)
+    decimal = "," if merge_commas else _detect_decimal(sample_rows, sep, n_cols)
+    # Colonnes qui contiennent des valeurs dans les vraies lignes de mesure (fin du fichier)
+    signature = _value_signature(sample_rows[-50:], n_cols)
 
-    first_data = _find_first_data_row(head_rows, n_cols)
+    first_data = _find_first_data_row(head_rows, n_cols, signature)
     if first_data is None:
         raise LoadError(
             "Le fichier « {} » ne contient pas de données numériques exploitables "
@@ -210,10 +228,11 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
         units.setdefault(col, unit)
 
     progress("Lecture des mesures de {} ({:.0f} Mo)…".format(path.name, size_mb))
-    raw = _read_table(path, encoding, sep, decimal, first_data, headers)
+    raw = _read_table(path, encoding, sep, decimal, first_data, headers, unwrap, merge_commas)
 
     progress("Conversion du temps de {}…".format(path.name))
     time_s, start, used_cols = _extract_time(raw, decimal, path.name)
+    time_s, rebuilt = _rebuild_coarse_time(time_s, _declared_sampling(head_rows[:first_data]))
 
     # Voies de mesure : toutes les autres colonnes numériques
     channels: List[Channel] = []
@@ -254,6 +273,10 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
         raise LoadError("La colonne temps du fichier « {} » est illisible.".format(path.name))
 
     msgs = []
+    if rebuilt:
+        msgs.append("Horodatage moins précis que la période d'échantillonnage ({}) : temps "
+                    "recalculé à partir de la période (fichier réenregistré par Excel ?).".format(
+                        format_period(rebuilt)))
     if skipped:
         msgs.append("{} ligne(s) sans horodatage ignorée(s) (messages, lignes incomplètes).".format(skipped))
     if over_range:
@@ -335,20 +358,94 @@ def _head_tail_lines(path: Path, encoding: str) -> Tuple[List[str], List[str]]:
     return head, tail
 
 
-def _read_table(path: Path, encoding: str, sep: str, decimal: str, first_data: int, headers: List[str]):
+def _read_table(path: Path, encoding: str, sep: str, decimal: str, first_data: int,
+                headers: List[str], unwrap: bool = False, merge_commas: bool = False):
     """Lecture rapide (moteur C de pandas) de la partie données du fichier."""
     names = list(range(len(headers)))
     text_cols = [i for i, h in enumerate(headers) if _is_time_header(h)] + [0]
+    # Séparateur et décimale identiques (valeurs entre guillemets) : pandas ne sait pas
+    # faire, les colonnes restent du texte et sont converties ensuite.
+    pandas_decimal = "." if (merge_commas or decimal == sep) else decimal
     with _open_text(path, encoding) as fh:
         for _ in range(first_data):
             fh.readline()
+        source = fh
+        if unwrap or merge_commas:
+            text = fh.read()
+            if unwrap:
+                text = _WHOLE_QUOTED_RE.sub(lambda m: m.group(1).replace('""', '"'), text)
+            if merge_commas:
+                text = _MERGE_COMMA_RE.sub(r"\1\2.\3", text)
+            source = io.StringIO(text)
         df = pd.read_csv(
-            fh, sep=sep, header=None, names=names, index_col=False, decimal=decimal,
+            source, sep=sep, header=None, names=names, index_col=False, decimal=pandas_decimal,
             dtype={i: str for i in text_cols}, skip_blank_lines=True, engine="c",
             on_bad_lines="skip", low_memory=False, quotechar='"',
         )
     df.columns = headers
     return df
+
+
+def _lines_fully_quoted(lines: List[str]) -> bool:
+    """Lignes entières entre guillemets : « "1,2026/06/01,17:01:39,+24.003" »."""
+    if not lines:
+        return False
+    quoted = [line for line in lines if _WHOLE_QUOTED_RE.match(line.strip())]
+    if len(quoted) < 0.9 * len(lines):
+        return False
+    return all(
+        len(next(csv.reader([line], delimiter=sep))) == 1 for line in quoted[:20] for sep in SEPARATORS
+    ) and any(sep in quoted[0] for sep in SEPARATORS)
+
+
+def _unwrap_quotes(lines: List[str]) -> List[str]:
+    out = []
+    for line in lines:
+        m = _WHOLE_QUOTED_RE.match(line.strip())
+        out.append(m.group(1).replace('""', '"') if m else line)
+    return out
+
+
+def _needs_comma_merge(rows: List[List[str]]) -> bool:
+    """Virgule à la fois séparateur et décimale ? (« +24 » suivi de « 003 » sur la plupart des lignes)"""
+    rows = [r for r in rows if len(r) >= 3]
+    if not rows or any(_POINT_DECIMAL_RE.match(f.strip()) for r in rows for f in r):
+        return False
+    with_pairs = sum(
+        any(_SIGNED_INT_RE.match(r[i].strip()) and _DIGITS_RE.match(r[i + 1].strip()) for i in range(len(r) - 1))
+        for r in rows
+    )
+    return with_pairs >= 0.8 * len(rows)
+
+
+def _merge_decimal_commas(lines: List[str]) -> List[str]:
+    return [_MERGE_COMMA_RE.sub(r"\1\2.\3", line) for line in lines]
+
+
+def _declared_sampling(preamble: List[List[str]]) -> float:
+    """Période annoncée dans l'en-tête (« Sampling interval,100ms » / « Sampling,1s »), en s."""
+    for row in preamble:
+        cells = [c.strip().strip('"') for c in row if c.strip()]
+        if len(cells) >= 2 and cells[0].lower().startswith("sampling"):
+            m = _SAMPLING_RE.match(cells[1])
+            if m:
+                value = float(m.group(1).replace(",", "."))
+                unit = m.group(2).lower()
+                return value * {"us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1.0, "sec": 1.0, "min": 60.0, "h": 3600.0}[unit]
+    return float("nan")
+
+
+def _rebuild_coarse_time(seconds: np.ndarray, period: float):
+    """Horodatage tronqué (ex. « 17:01 » sans les secondes après passage par Excel) :
+    si la plupart des points ont la même heure que le précédent, le temps est recalculé
+    à partir de la période annoncée dans l'en-tête. Renvoie (temps, période ou 0)."""
+    if not (period > 0) or len(seconds) < 3:
+        return seconds, 0.0
+    diffs = np.diff(seconds[np.isfinite(seconds)])
+    if len(diffs) == 0 or np.mean(diffs == 0) < 0.5:
+        return seconds, 0.0
+    rebuilt = np.where(np.isfinite(seconds), np.arange(len(seconds)) * period, np.nan)
+    return rebuilt, period
 
 
 def _is_time_header(header: str) -> bool:
@@ -410,8 +507,8 @@ def _modal_field_count(rows: List[List[str]]) -> int:
 
 
 def _detect_decimal(rows: List[List[str]], sep: str, n_cols: int) -> str:
-    if sep == ",":
-        return "."
+    # Avec « , » comme séparateur, une décimale « , » n'est possible qu'entre guillemets :
+    # csv.reader les a retirés, la virgule apparaît alors dans le champ.
     for r in rows:
         if len(r) == n_cols and any(_DECIMAL_COMMA_RE.match(f.strip().strip('"')) for f in r):
             return ","
@@ -423,16 +520,34 @@ def _is_value(field_: str) -> bool:
     return bool(f) and bool(_NUMBER_RE.match(f) or _DATETIME_LIKE_RE.match(f) or _OVER_RANGE_RE.match(f))
 
 
-def _is_data_row(row: List[str], n_cols: int) -> bool:
-    # Un horodatage + au moins une valeur suffisent : les colonnes d'alarme ("LLLL"),
-    # de messages ou les voies débranchées ne doivent pas faire rejeter la ligne.
-    return len(row) == n_cols and sum(_is_value(f) for f in row) >= 2
+def _value_signature(rows: List[List[str]], n_cols: int) -> set:
+    """Colonnes contenant une valeur dans (presque) toutes les lignes de mesure."""
+    data = [r for r in rows if len(r) == n_cols]
+    if not data:
+        return set()
+    return {j for j in range(n_cols) if sum(_is_value(r[j]) for r in data) >= 0.9 * len(data)}
 
 
-def _find_first_data_row(rows, n_cols) -> Optional[int]:
+def _is_data_row(row: List[str], n_cols: int, signature: Optional[set] = None) -> bool:
+    """Ligne de mesure ?
+
+    Les colonnes d'alarme ("LLLL"), de messages ou les voies débranchées ne doivent pas
+    faire rejeter la ligne. Mais une ligne d'en-tête complétée par Excel
+    (« Start time;01/06/2026;17:01:39;;;;;; ») ne doit pas passer pour une mesure :
+    on vérifie qu'elle a des valeurs aux mêmes colonnes que les vraies lignes de données.
+    """
+    if len(row) != n_cols:
+        return False
+    if signature and len(signature) >= 2:
+        hits = sum(_is_value(row[j]) for j in signature)
+        return hits >= max(2, math.ceil(0.8 * len(signature)))
+    return sum(_is_value(f) for f in row) >= 2
+
+
+def _find_first_data_row(rows, n_cols, signature: Optional[set] = None) -> Optional[int]:
     for i in range(len(rows)):
-        if _is_data_row(rows[i], n_cols) and all(
-            _is_data_row(rows[j], n_cols) for j in range(i + 1, min(i + 3, len(rows)))
+        if _is_data_row(rows[i], n_cols, signature) and all(
+            _is_data_row(rows[j], n_cols, signature) for j in range(i + 1, min(i + 3, len(rows)))
         ):
             return i
     return None

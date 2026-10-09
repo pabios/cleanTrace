@@ -4,7 +4,9 @@ La structure (en-têtes, colonnes, formats de date, séparateurs) reproduit des 
 réels ; seules les valeurs sont simulées : cycles charge / repos / décharge de 10 min.
 
 exemples/
-* GL980_Mes-_260601-170139.CSV  Graphtec GL980 — « ; » et décimale « , », bloc
+* GL980_Mes-_260601-170139.CSV  Graphtec GL980 tel qu'écrit par l'appareil (dans Excel,
+      tout tient dans une seule colonne) : séparateur « , » et décimale « , », donc les
+      nombres sont entre guillemets ("+24,003"). Bloc
       Vendor/Model/…, « AMP settings » (CH3 à CH8 actives, nom + unité), « XY settings »,
       « Position/Vernier settings », puis « Data » : Number;Date;Time;us;CH3…;Alarm;AlarmOut.
       100 ms. Pics de saturation et bruit de repos sur les courants.
@@ -116,6 +118,8 @@ def gl980():
         lines.append(";".join(
             [str(k + 1), dates[k], hours[k], str(micro[k])] + [c[k] for c in columns] + [alarm, "LLLL"]
         ))
+    # Séparateur « , » : les champs contenant une virgule (décimales) sont entre guillemets
+    lines = [",".join('"{}"'.format(c) if "," in c else c for c in line.split(";")) for line in lines]
     (OUT / "GL980_Mes-_260601-170139.CSV").write_bytes(("\r\n".join(lines) + "\r\n").encode("cp1252"))
 
 
