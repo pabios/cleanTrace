@@ -45,6 +45,13 @@ def wait_idle(root, gui, timeout=300):
     pump(root)
 
 
+def shot_window(win, name):
+    pump(win)
+    x, y = win.winfo_rootx(), win.winfo_rooty()
+    ImageGrab.grab(bbox=(x, y, x + win.winfo_width(), y + win.winfo_height()), xdisplay=":99").save(OUT / name)
+    print("capture :", OUT / name)
+
+
 def shot(root, name):
     pump(root)
     x, y = root.winfo_rootx(), root.winfo_rooty()
@@ -72,7 +79,10 @@ def main():
     gui.redraw()
     shot(root, "2_shunt_brut.png")
 
-    gui.clean_selected()
+    dialog = gui.clean_selected()
+    pump(root)
+    shot_window(dialog, "3a_fenetre_nettoyage.png")
+    dialog.apply()
     wait_idle(root, gui)
     print("état :", gui.status.get())
     shot(root, "3_shunt_nettoye.png")
@@ -134,6 +144,26 @@ def main():
         shot(root, "9_{}.png".format("commune" if "commune" in label else "etiree"))
     gui.time_mode_var.set("Heure réelle")
     gui._on_time_mode()
+
+    # GL860 : petits courants permanents -> pas de suggestion, seuil vidé = rien d'effacé
+    gui.session.clear()
+    gui._checked.clear()
+    gui.open_files([str(ROOT / "exemples" / "autres_formats" / "GL860_1s.CSV")])
+    wait_idle(root, gui)
+    dialog = gui.clean_selected()
+    pump(root)
+    shot_window(dialog, "10_nettoyage_gl860_defaut.png")
+    dialog.use_suggestions()
+    pump(root)
+    shot_window(dialog, "11_nettoyage_gl860_suggestions.png")
+    dialog.apply()
+    wait_idle(root, gui)
+    small = gui.session.measurements["GL860_1s.CSV"].data["Channel 11 - I_LH7 (mA)"]
+    assert (small != 0).all(), "les petits courants ne doivent pas être effacés avec les suggestions"
+    print("GL860 :", gui.status.get())
+    help_window = app_module.HelpWindow.open(root, "Nettoyage")
+    shot_window(help_window, "12_aide.png")
+    help_window.destroy()
 
     if len(sys.argv) > 2:  # gros fichier : indicateur de chargement + temps total
         gui.session.clear()

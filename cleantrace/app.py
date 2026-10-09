@@ -25,6 +25,8 @@ from matplotlib.figure import Figure
 
 from . import __version__
 from .cleaning import CleaningOptions
+from .dialogs import CleaningDialog
+from .help import HelpWindow
 from .editing import ClickCorrector
 from .export import Key
 from .loader import write_extract
@@ -78,6 +80,7 @@ class CleanTraceApp:
             button = ttk.Button(bar, text=text, command=command)
             button.pack(side=tk.LEFT, padx=(0, pad))
             self._action_buttons.append(button)
+        ttk.Button(bar, text="Aide", command=lambda: HelpWindow.open(self.root)).pack(side=tk.LEFT, padx=(6, 0))
         self.lbl_reference = ttk.Label(bar, text="", foreground="#555")
         self.lbl_reference.pack(side=tk.RIGHT)
 
@@ -110,19 +113,21 @@ class CleanTraceApp:
         clean.pack(fill=tk.X, pady=(6, 0))
         self.chk_noise = tk.BooleanVar(value=True)
         self.chk_peaks = tk.BooleanVar(value=True)
-        ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos (< 10 mA, < 5 mV)",
-                        variable=self.chk_noise).pack(anchor=tk.W)
-        ttk.Checkbutton(clean, text="Supprimer les pics de saturation (> 98 % du max)",
+        ttk.Checkbutton(clean, text="Supprimer les pics de saturation",
                         variable=self.chk_peaks).pack(anchor=tk.W)
+        ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos (seuil réglable par voie)",
+                        variable=self.chk_noise).pack(anchor=tk.W)
         row = ttk.Frame(clean)
         row.pack(fill=tk.X, pady=(4, 0))
         for text, command, pad in (
-            ("Nettoyer", self.clean_selected, 0),
+            ("Nettoyer…", self.clean_selected, 0),
             ("Restaurer les données brutes", self.restore_selected, 4),
         ):
             button = ttk.Button(row, text=text, command=command)
             button.pack(side=tk.LEFT, padx=pad)
             self._action_buttons.append(button)
+        ttk.Button(row, text="?", width=3, command=lambda: HelpWindow.open(self.root, "Nettoyage")).pack(
+            side=tk.RIGHT)
 
         # --- Superposition de fichiers : base de temps et grille d'export
         base = ttk.LabelFrame(side, text="Base de temps (superposition des fichiers)", padding=6)
@@ -276,21 +281,24 @@ class CleanTraceApp:
         if not keys:
             messagebox.showinfo("Nettoyage", "Cochez au moins une voie.", parent=self.root)
             return
-        if not (self.chk_noise.get() or self.chk_peaks.get()):
-            messagebox.showinfo("Nettoyage", "Activez au moins un traitement.", parent=self.root)
+        if self.busy:
             return
-        options = CleaningOptions(remove_noise=self.chk_noise.get(), remove_peaks=self.chk_peaks.get())
+        return CleaningDialog(self, keys)
+
+    def apply_cleaning(self, keys, options: CleaningOptions, thresholds=None) -> None:
+        """Applique le nettoyage réglé dans la fenêtre « Nettoyer… » (en arrière-plan)."""
 
         def done(report):
             self.redraw()
-            self._set_status(
-                "Nettoyage de {} voie(s) : {} pic(s) supprimé(s), {} point(s) de bruit forcés à 0.".format(
-                    len(keys), report.peak_points, report.noise_points)
-            )
+            message = "Nettoyage de {} voie(s) : {} pic(s) supprimé(s), {} point(s) de bruit forcés à 0.".format(
+                len(keys), report.peak_points, report.noise_points)
+            if options.remove_noise and report.noise_points == 0:
+                message += " Aucun repos sous le seuil : voies qui ne reviennent pas à 0, ou seuil trop bas."
+            self._set_status(message)
 
         self.run_in_background(
             "Nettoyage de {} voie(s)…".format(len(keys)),
-            lambda progress: self.session.apply_cleaning(keys, options), done,
+            lambda progress: self.session.apply_cleaning(keys, options, thresholds), done,
         )
 
     def restore_selected(self) -> None:

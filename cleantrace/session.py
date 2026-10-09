@@ -11,7 +11,10 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
-from .cleaning import CleaningOptions, CleaningReport, clean_signal
+from .cleaning import (
+    CleaningOptions, CleaningReport, clean_signal, default_noise_threshold, has_rest_phase,
+    suggest_noise_threshold,
+)
 from .editing import interpolate_at
 from .export import Key, merge_selection, write_csv
 from .loader import TIME_COL, LoadError, Measurement, align_time_axes, load_measurement
@@ -45,6 +48,7 @@ class Session:
         self.time_mode = "real"
         self.window: Optional[Tuple[float, float]] = None  # période commune (minutes)
         self.export_step_s: Optional[float] = None
+        self.noise_thresholds: Dict[Key, Optional[float]] = {}  # seuils de bruit réglés par voie
 
     # ----------------------------------------------------------------- fichiers
 
@@ -95,6 +99,7 @@ class Session:
         self.reference = None
         self.time_offset_min = 0.0
         self.window = None
+        self.noise_thresholds.clear()
 
     def set_time_mode(self, mode: str) -> None:
         if mode not in TIME_MODES:
@@ -127,12 +132,49 @@ class Session:
 
     # ---------------------------------------------------------------- traitements
 
-    def apply_cleaning(self, keys: Sequence[Key], options: CleaningOptions) -> CleaningReport:
+    def noise_threshold(self, key: Key) -> Optional[float]:
+        """Seuil de bruit de repos de la voie : réglé par l'utilisateur, sinon celui de l'unité.
+
+        Par défaut, une voie qui ne revient jamais à 0 (petit courant permanent, tension
+        d'alimentation...) n'est pas mise à 0 : le seuil de l'unité effacerait de vraies mesures.
+        """
+        if key in self.noise_thresholds:
+            return self.noise_thresholds[key]
+        if not self.has_rest_phase(key):
+            return None
+        return default_noise_threshold(self.measurements[key[0]].channel(key[1]).unit)
+
+    def has_rest_phase(self, key: Key) -> bool:
+        return has_rest_phase(self.measurements[key[0]].data[key[1]].to_numpy(dtype=float))
+
+    def suggest_noise_threshold(self, key: Key) -> Optional[float]:
+        return suggest_noise_threshold(self.measurements[key[0]].data[key[1]].to_numpy(dtype=float))
+
+    def preview_cleaning(
+        self, keys: Sequence[Key], options: CleaningOptions, thresholds: Optional[Dict[Key, Optional[float]]] = None
+    ) -> Dict[Key, CleaningReport]:
+        """Nombre de points que le nettoyage modifierait, voie par voie (sans rien modifier)."""
+        out = {}
+        for key in keys:
+            m = self.measurements[key[0]]
+            threshold = (thresholds or {}).get(key, self.noise_threshold(key))
+            _, out[key] = clean_signal(m.data[key[1]].to_numpy(dtype=float), m.channel(key[1]).unit,
+                                       options, noise_threshold=threshold)
+        return out
+
+    def apply_cleaning(
+        self, keys: Sequence[Key], options: CleaningOptions, thresholds: Optional[Dict[Key, Optional[float]]] = None
+    ) -> CleaningReport:
+        """US-03 : nettoie les voies. ``thresholds`` : seuils de bruit par voie (mémorisés)."""
+        if thresholds:
+            self.noise_thresholds.update(thresholds)
         total = CleaningReport()
-        for name, label in keys:
+        for key in keys:
+            name, label = key
             m = self.measurements[name]
             ch = m.channel(label)
-            cleaned, report = clean_signal(m.data[label].to_numpy(dtype=float), ch.unit, options)
+            cleaned, report = clean_signal(m.data[label].to_numpy(dtype=float), ch.unit, options,
+                                           noise_threshold=self.noise_threshold(key))
             m.data[label] = cleaned
             total.noise_points += report.noise_points
             total.peak_points += report.peak_points

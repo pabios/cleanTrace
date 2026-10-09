@@ -290,6 +290,60 @@ def test_peaks_removed_square_wave_untouched():
     np.testing.assert_allclose(out, clean, atol=1e-9)
 
 
+def test_noisy_plateau_top_is_not_shaved():
+    """Créneau bruité dont le palier haut est au maximum : le haut du bruit n'est pas un pic."""
+    rng = np.random.default_rng(3)
+    t = np.arange(670)
+    y = np.where((t // 60) % 2 == 0, 160.0, 85.0) + rng.normal(0, 1.2, len(t))
+    out, n = remove_saturation_peaks(y)
+    assert n == 0
+    np.testing.assert_array_equal(out, y)
+    y[200] = y[400] = 300.0  # vrais pics de saturation (palier bas à 200, haut à 400) : ils partent
+    out, n = remove_saturation_peaks(y)
+    assert n == 2 and abs(out[200] - 85) < 5 and abs(out[400] - 160) < 5  # remis au niveau du palier
+
+
+def test_pure_noise_channel_untouched():
+    """Voie sans signal (0,02 mA ± bruit) : rien n'est un pic."""
+    rng = np.random.default_rng(4)
+    y = np.round(0.02 + rng.normal(0, 0.01, 670), 2)
+    assert remove_saturation_peaks(y)[1] == 0
+
+
+def test_noise_threshold_suggestion():
+    from cleantrace.cleaning import suggest_noise_threshold
+
+    rng = np.random.default_rng(5)
+    y = np.r_[np.full(500, 5.0), np.zeros(500), np.full(500, -5.0)] + rng.normal(0, 0.015, 1500)
+    s = suggest_noise_threshold(y)
+    assert 0.03 < s < 0.1  # bruit ±30-45 mA -> seuil ~50-70 mA (le seuil fixe de 10 mA était trop bas)
+    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False), noise_threshold=s)
+    assert report.noise_points >= 495 and (out[500:1000] == 0).mean() > 0.99
+    # petit courant permanent : aucune suggestion, et seuil vide = rien d'effacé
+    small = 3.0 + rng.normal(0, 0.05, 670)
+    assert suggest_noise_threshold(small) is None
+    out, report = clean_signal(small, "mA", CleaningOptions(remove_peaks=False), noise_threshold=None)
+    assert report.noise_points == 0
+
+
+def test_session_thresholds_preview_and_apply():
+    s = Session()
+    s.load_files([GL860])
+    key = (GL860.name, "Channel 11 - I_LH7 (mA)")
+    before = s.measurements[key[0]].data[key[1]].copy()
+    assert s.noise_threshold(key) is None  # 2 à 4 mA permanents : pas de mise à 0 par défaut
+    assert s.preview_cleaning([key], CleaningOptions())[key].noise_points == 0
+    # seuil imposé à 10 mA : l'aperçu montre que tout serait effacé, sans rien modifier
+    assert s.preview_cleaning([key], CleaningOptions(), {key: 10.0})[key].noise_points == len(before)
+    pd.testing.assert_series_equal(s.measurements[key[0]].data[key[1]], before)
+    s.apply_cleaning([key], CleaningOptions(), thresholds={key: 0.5})
+    assert s.noise_threshold(key) == 0.5  # réglage mémorisé
+    assert (s.measurements[key[0]].data[key[1]] != 0).all()
+    s2 = Session()
+    s2.load_files([EXAMPLES / GL980])
+    assert s2.noise_threshold(SHUNT) == 0.010  # voie avec repos à 0 : seuil de l'unité (cahier des charges)
+
+
 def test_genuine_plateau_at_max_is_kept():
     y = square_wave()
     out, n = remove_saturation_peaks(y)

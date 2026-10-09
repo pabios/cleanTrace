@@ -5,9 +5,11 @@ Règles métier :
 1. **Bruit de repos** (``chk_noise``) : pendant les phases d'arrêt, tout signal sous le
    seuil physique (< 10 mA, < 5 mV...) est forcé à 0.0.
 2. **Pics de saturation** (``chk_peaks``) : les groupes d'échantillons étroits proches du
-   plafond de mesure (> 98 % du max) sont remplacés par l'enveloppe minimale SciPy
+   plafond de mesure (> 98 % du max) qui dépassent l'enveloppe minimale SciPy
    (``minimum_filter1d`` suivi de ``maximum_filter1d``, c'est-à-dire une ouverture
-   morphologique), puis lissés par ``gaussian_filter1d``.
+   morphologique) ET le niveau local de la courbe de beaucoup plus que le bruit de
+   mesure, sont remplacés par ce niveau local (médiane glissante), puis lissés par
+   ``gaussian_filter1d``. Le haut du bruit d'un palier réel n'est donc jamais raboté.
 
 Garanties (critères d'acceptation) :
 
@@ -23,7 +25,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d, maximum_filter1d, minimum_filter1d
+from scipy.ndimage import gaussian_filter1d, maximum_filter1d, median_filter, minimum_filter1d
 
 # Seuils physiques du bruit de repos, par unité
 NOISE_THRESHOLDS = {
@@ -42,6 +44,7 @@ class CleaningOptions:
     saturation_ratio: float = 0.98  # seuil "proche du plafond" (fraction du max)
     max_peak_width: int = 5  # largeur max d'un pic parasite (échantillons)
     min_prominence: float = 0.05  # hauteur min d'un pic au-dessus de l'enveloppe (fraction de l'amplitude)
+    noise_factor: float = 8.0  # ... et au-dessus du niveau local (multiple du bruit de mesure)
     smoothing_sigma: float = 1.0  # lissage gaussien des points réparés (échantillons)
     min_rest_samples: int = 3  # durée min d'une phase d'arrêt (échantillons)
 
@@ -56,10 +59,61 @@ class CleaningReport:
         return self.noise_points + self.peak_points
 
 
+_DEFAULT = object()
+
+
+def default_noise_threshold(unit: str) -> Optional[float]:
+    """Seuil de bruit de repos par défaut pour une unité (None : pas de mise à 0)."""
+    return NOISE_THRESHOLDS.get(unit)
+
+
+def _rest_values(y, min_rest_fraction: float = 0.02) -> Optional[np.ndarray]:
+    """|valeurs| des points « au repos » (à moins de 5 % de l'amplitude autour de 0),
+    ou None si la voie ne revient pas (assez) à 0."""
+    y = np.asarray(y, dtype=float)
+    y = y[np.isfinite(y)]
+    if len(y) < 10:
+        return None
+    amplitude = float(np.max(np.abs(y)))
+    if amplitude == 0:
+        return None
+    rest = np.abs(y[np.abs(y) < 0.05 * amplitude])
+    return rest if len(rest) >= min_rest_fraction * len(y) else None
+
+
+def has_rest_phase(y) -> bool:
+    """La voie a-t-elle des phases d'arrêt autour de 0 ? (sinon : ne jamais forcer à 0)"""
+    return _rest_values(y) is not None
+
+
+def suggest_noise_threshold(y, min_rest_fraction: float = 0.02) -> Optional[float]:
+    """Seuil proposé d'après les données : 1,5 × le bruit mesuré pendant les repos à 0.
+
+    Les points « au repos » sont ceux à moins de 5 % de l'amplitude de la voie autour
+    de 0. S'il y en a trop peu (voie qui ne revient jamais à 0, petit courant permanent),
+    aucun seuil n'est proposé : mettre à 0 détruirait de vraies mesures.
+    """
+    rest = _rest_values(y, min_rest_fraction)
+    if rest is None:
+        return None
+    rest = rest[rest > 0]  # repos déjà nettoyé (zéros exacts) : on mesure ce qui reste
+    if len(rest) == 0:
+        return None
+    noise = float(np.percentile(rest, 99.5))
+    if noise == 0:
+        return None
+    value = 1.5 * noise
+    return float("{:.2g}".format(value))
+
+
 def clean_signal(
-    y, unit: str = "", options: Optional[CleaningOptions] = None
+    y, unit: str = "", options: Optional[CleaningOptions] = None, noise_threshold=_DEFAULT
 ) -> Tuple[np.ndarray, CleaningReport]:
-    """Applique les traitements activés à un signal. Renvoie (signal nettoyé, rapport)."""
+    """Applique les traitements activés à un signal. Renvoie (signal nettoyé, rapport).
+
+    ``noise_threshold`` : seuil de bruit de repos de cette voie (dans son unité). Par
+    défaut, celui de l'unité (``NOISE_THRESHOLDS``) ; None : pas de mise à 0.
+    """
     options = options or CleaningOptions()
     out = np.asarray(y, dtype=float).copy()
     report = CleaningReport()
@@ -71,11 +125,14 @@ def clean_signal(
             max_width=options.max_peak_width,
             min_prominence=options.min_prominence,
             sigma=options.smoothing_sigma,
+            noise_factor=options.noise_factor,
         )
     if options.remove_noise:
-        out, report.noise_points = zero_rest_noise(
-            out, unit, min_samples=options.min_rest_samples
-        )
+        threshold = default_noise_threshold(unit) if noise_threshold is _DEFAULT else noise_threshold
+        if threshold:
+            out, report.noise_points = zero_rest_noise(
+                out, unit, threshold=threshold, min_samples=options.min_rest_samples
+            )
     return out, report
 
 
@@ -114,6 +171,7 @@ def remove_saturation_peaks(
     min_prominence: float = 0.05,
     sigma: float = 1.0,
     max_iter: int = 5,
+    noise_factor: float = 8.0,
 ) -> Tuple[np.ndarray, int]:
     """Supprime les pics de saturation (positifs et négatifs) sans toucher au reste du signal."""
     out = np.asarray(y, dtype=float).copy()
@@ -136,14 +194,18 @@ def remove_saturation_peaks(
         if amplitude == 0:
             break
         prominence = min_prominence * amplitude
+        # Niveau local de la courbe (médiane glissante, insensible à un pic de 5 points) et
+        # écart minimal pour parler de pic : jamais moins de noise_factor × le bruit de mesure,
+        # sinon le haut du bruit d'un palier réel serait raboté.
+        level = median_filter(work, size=4 * max_width + 1, mode="nearest")
+        margin = max(prominence, noise_factor * _noise_sigma(work))
 
         high, low = _saturated(work, ratio)
-        pos = _narrow(high, max_width) & (work - upper_env > prominence)
-        neg = _narrow(low, max_width) & (lower_env - work > prominence)
+        pos = _narrow(high, max_width) & (work - upper_env > prominence) & (work - level > margin)
+        neg = _narrow(low, max_width) & (lower_env - work > prominence) & (level - work > margin)
         if not (pos.any() or neg.any()):
             break
-        work[pos] = upper_env[pos]
-        work[neg] = lower_env[neg]
+        work[pos | neg] = level[pos | neg]
         repaired |= pos | neg
 
     if repaired.any() and sigma > 0:
@@ -185,6 +247,16 @@ def _runs(mask: np.ndarray):
     padded = np.concatenate(([False], np.asarray(mask, dtype=bool), [False]))
     edges = np.flatnonzero(padded[1:] != padded[:-1])
     return zip(edges[::2], edges[1::2])
+
+
+def _noise_sigma(y: np.ndarray) -> float:
+    """Écart-type du bruit de mesure, estimé de façon robuste sur les différences successives
+    (les fronts des créneaux et les pics sont trop rares pour fausser la médiane)."""
+    d = np.diff(y)
+    if len(d) == 0:
+        return 0.0
+    mad = float(np.median(np.abs(d - np.median(d))))
+    return 1.4826 * mad / np.sqrt(2.0)
 
 
 def _fill_nan(y: np.ndarray, finite: np.ndarray) -> np.ndarray:
