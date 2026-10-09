@@ -19,6 +19,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List
 
+import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
@@ -27,8 +28,8 @@ from .cleaning import CleaningOptions
 from .editing import ClickCorrector
 from .export import Key
 from .loader import write_extract
-from .plotting import PlotManager
-from .session import Session
+from .plotting import PlotManager, format_hms
+from .session import EXPORT_STEPS, TIME_MODES, Session
 
 APP_TITLE = "CleanTrace — MultiPlotter pour bancs d'essai"
 CHECKED, UNCHECKED, PARTIAL = "☑", "☐", "◩"
@@ -122,6 +123,25 @@ class CleanTraceApp:
             button = ttk.Button(row, text=text, command=command)
             button.pack(side=tk.LEFT, padx=pad)
             self._action_buttons.append(button)
+
+        # --- Superposition de fichiers : base de temps et grille d'export
+        base = ttk.LabelFrame(side, text="Base de temps (superposition des fichiers)", padding=6)
+        base.pack(fill=tk.X, pady=(6, 0))
+        self.time_mode_var = tk.StringVar(value=TIME_MODES["real"])
+        mode_box = ttk.Combobox(base, textvariable=self.time_mode_var, values=list(TIME_MODES.values()),
+                                state="readonly")
+        mode_box.pack(fill=tk.X)
+        mode_box.bind("<<ComboboxSelected>>", self._on_time_mode)
+        row = ttk.Frame(base)
+        row.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(row, text="Grille d'export :").pack(side=tk.LEFT)
+        self.export_step_var = tk.StringVar(value=EXPORT_STEPS[None])
+        step_box = ttk.Combobox(row, textvariable=self.export_step_var, values=list(EXPORT_STEPS.values()),
+                                state="readonly", width=26)
+        step_box.pack(side=tk.LEFT, padx=(4, 0), fill=tk.X, expand=True)
+        step_box.bind("<<ComboboxSelected>>", self._on_export_step)
+        self.lbl_window = ttk.Label(base, text="", foreground="#555", wraplength=350, justify=tk.LEFT)
+        self.lbl_window.pack(anchor=tk.W, pady=(4, 0))
 
         # --- US-04 : décalage temporel des courbes climatiques
         shift = ttk.LabelFrame(side, text="Décalage enceinte climatique (min)", padding=6)
@@ -376,6 +396,7 @@ class CleanTraceApp:
         series = self.session.series(keys)
         self._gid_key = {s.gid: key for s, key in zip(series, keys)}
         self.plot.time_offset_min = self.session.time_offset_min
+        self.plot.percent_axis = self.session.percent_axis
         self.plot.draw(series)
 
     def _rebuild_tree(self) -> None:
@@ -396,6 +417,45 @@ class CleanTraceApp:
                 text="Référence temps : {} ({}, {})".format(ref.name, ref.source, ref.period_label))
         else:
             self.lbl_reference.config(text="")
+        self._update_window_label()
+
+    def _update_window_label(self) -> None:
+        s = self.session
+        text = ""
+        if s.time_mode == "common" and len(s.measurements) > 1:
+            if s.window is None:
+                text = ("Aucune période commune entre ces fichiers : affichage complet. "
+                        "Essayez « Débuts à 0 » ou « Durée étirée ».")
+            else:
+                duration = s.window[1] - s.window[0]
+                start = s.window_start
+                text = "Période commune : {} → {} ({})".format(
+                    start.strftime("%d/%m %H:%M:%S") if start is not None else format_hms(s.window[0]),
+                    (start + pd.Timedelta(minutes=duration)).strftime("%d/%m %H:%M:%S")
+                    if start is not None else format_hms(s.window[1]),
+                    format_hms(duration))
+        elif s.time_mode == "stretch":
+            text = "Chaque fichier va de 0 à 100 % de sa propre durée (le temps est déformé)."
+        elif s.time_mode == "zero":
+            text = "Chaque fichier démarre à 0 (heures réelles ignorées)."
+        self.lbl_window.config(text=text)
+
+    def _on_time_mode(self, _event=None) -> None:
+        if self.busy:
+            return
+        label = self.time_mode_var.get()
+        mode = next(k for k, v in TIME_MODES.items() if v == label)
+        self.session.set_time_mode(mode)
+        # Le décalage de l'enceinte (en minutes) n'a pas de sens sur un axe en %
+        self.offset_scale.config(state=tk.DISABLED if self.session.percent_axis else tk.NORMAL)
+        self._update_window_label()
+        self.redraw()
+        self._set_status("Base de temps : {}.".format(label))
+
+    def _on_export_step(self, _event=None) -> None:
+        label = self.export_step_var.get()
+        self.session.export_step_s = next(k for k, v in EXPORT_STEPS.items() if v == label)
+        self._set_status("Grille d'export : {}.".format(label))
 
     def _refresh_checkmarks(self) -> None:
         for item, key in self._item_key.items():

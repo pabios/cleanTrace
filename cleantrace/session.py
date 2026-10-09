@@ -18,12 +18,33 @@ from .loader import TIME_COL, LoadError, Measurement, align_time_axes, load_meas
 from .plotting import PlotSeries
 
 
+# Bases de temps pour superposer plusieurs fichiers
+TIME_MODES = OrderedDict([
+    ("real", "Heure réelle"),  # chaque mesure à son heure (même essai, appareils à l'heure)
+    ("common", "Période commune"),  # uniquement la période où tous les fichiers mesurent
+    ("zero", "Débuts à 0"),  # chaque fichier démarre à 0 (horloges pas à l'heure)
+    ("stretch", "Durée étirée (0-100 %)"),  # chaque fichier de 0 à 100 % de sa durée
+])
+
+# Grilles d'export proposées (None : celle du fichier de référence)
+EXPORT_STEPS = OrderedDict([
+    (None, "Grille du fichier de référence"),
+    (0.1, "100 ms"),
+    (1.0, "1 s"),
+    (10.0, "10 s"),
+    (60.0, "1 min"),
+])
+
+
 class Session:
     def __init__(self) -> None:
         self.measurements: "OrderedDict[str, Measurement]" = OrderedDict()
         self._raw: Dict[str, pd.DataFrame] = {}  # copie des données brutes, pour restaurer
         self.reference: Optional[Measurement] = None
         self.time_offset_min = 0.0  # décalage des courbes climatiques (minutes)
+        self.time_mode = "real"
+        self.window: Optional[Tuple[float, float]] = None  # période commune (minutes)
+        self.export_step_s: Optional[float] = None
 
     # ----------------------------------------------------------------- fichiers
 
@@ -73,6 +94,25 @@ class Session:
         self._raw.clear()
         self.reference = None
         self.time_offset_min = 0.0
+        self.window = None
+
+    def set_time_mode(self, mode: str) -> None:
+        if mode not in TIME_MODES:
+            raise ValueError(mode)
+        self.time_mode = mode
+        self._realign()
+
+    @property
+    def percent_axis(self) -> bool:
+        """Axe du temps en % de la durée (mode « étiré ») au lieu de minutes."""
+        return self.time_mode == "stretch"
+
+    @property
+    def window_start(self) -> Optional[pd.Timestamp]:
+        """Heure réelle du début de la période commune."""
+        if self.window is None or self.reference is None or self.reference.start is None:
+            return None
+        return self.reference.start + pd.Timedelta(minutes=self.window[0])
 
     def all_keys(self) -> List[Key]:
         return [(m.name, ch.label) for m in self.measurements.values() for ch in m.channels]
@@ -125,15 +165,23 @@ class Session:
         for i, (name, label) in enumerate(keys):
             m = self.measurements[name]
             ch = m.channel(label)
+            x = m.data[TIME_COL].to_numpy(dtype=float)
+            y = m.data[label].to_numpy(dtype=float)
+            first = 0
+            if self.window is not None:  # période commune : on ne garde que la fenêtre
+                first = int(np.searchsorted(x, self.window[0] - 1e-9))
+                last = int(np.searchsorted(x, self.window[1] + 1e-9, side="right"))
+                x, y = x[first:last], y[first:last]
             out.append(
                 PlotSeries(
                     gid=str(i),
                     label="{} — {}".format(label, name) if several_files else label,
-                    x=m.data[TIME_COL].to_numpy(dtype=float),
-                    y=m.data[label].to_numpy(dtype=float),
+                    x=x,
+                    y=y,
                     unit=ch.unit,
                     quantity=ch.quantity,
-                    shiftable=m.is_thermal,
+                    shiftable=m.is_thermal and not self.percent_axis,
+                    index_base=first,
                 )
             )
         return out
@@ -144,7 +192,8 @@ class Session:
         if self.reference is None:
             raise ValueError("Aucun fichier chargé.")
         df = merge_selection(
-            list(self.measurements.values()), self.reference, keys, self.time_offset_min
+            list(self.measurements.values()), self.reference, keys, self.time_offset_min,
+            window=self.window, step_s=self.export_step_s, percent=self.percent_axis,
         )
         write_csv(df, path)
         return df
@@ -152,10 +201,32 @@ class Session:
     # --------------------------------------------------------------- interne
 
     def _realign(self) -> None:
-        self.reference = align_time_axes(list(self.measurements.values()))
+        measurements = list(self.measurements.values())
+        self.reference = align_time_axes(measurements)  # heure réelle
+        self.window = None
+        if self.time_mode == "zero":
+            for m in measurements:
+                m.data[TIME_COL] = m.elapsed_min
+                m.align_note = ""
+        elif self.time_mode == "stretch":
+            for m in measurements:
+                m.data[TIME_COL] = m.elapsed_min / max(m.duration_min, 1e-9) * 100.0
+                m.align_note = ""
+        elif self.time_mode == "common":
+            self.window = self._common_window(measurements)
         for name, m in self.measurements.items():
             self._raw[name][TIME_COL] = m.data[TIME_COL].to_numpy(copy=True)
 
+
+    @staticmethod
+    def _common_window(measurements) -> Optional[Tuple[float, float]]:
+        """Période où tous les fichiers recalés sur l'heure réelle mesurent en même temps."""
+        aligned = [m for m in measurements if not m.align_note and len(m.data)]
+        if len(aligned) < 2:
+            return None
+        start = max(float(m.data[TIME_COL].iloc[0]) for m in aligned)
+        end = min(float(m.data[TIME_COL].iloc[-1]) for m in aligned)
+        return (start, end) if end > start else None
 
 
 def _unique_name(name: str, taken) -> str:

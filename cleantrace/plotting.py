@@ -13,7 +13,7 @@ from typing import Dict, List, Sequence
 
 import numpy as np
 from matplotlib import cm
-from matplotlib.ticker import FuncFormatter, Locator
+from matplotlib.ticker import FuncFormatter, Locator, MaxNLocator
 
 from .channels import HUMIDITY, TEMPERATURE
 
@@ -29,6 +29,7 @@ class PlotSeries:
     unit: str
     quantity: str
     shiftable: bool = False  # courbe climatique concernée par le décalage temporel
+    index_base: int = 0  # indice, dans les données complètes, du premier point de x / y
 
 
 def format_hms(minutes: float, _pos=None) -> str:
@@ -122,7 +123,8 @@ def decimate_indices(y: np.ndarray, start: int, stop: int, buckets: int = MAX_BU
 class _Trace:
     """Une courbe affichée : données complètes + indices actuellement tracés."""
 
-    def __init__(self, line, x, y, shiftable):
+    def __init__(self, line, x, y, shiftable, index_base=0):
+        self.index_base = index_base
         self.line = line
         self.x = np.asarray(x, dtype=float)
         self.y = np.asarray(y, dtype=float)
@@ -136,6 +138,7 @@ class PlotManager:
     def __init__(self, figure):
         self.figure = figure
         self.time_offset_min = 0.0
+        self.percent_axis = False  # axe du temps en % de la durée (mode « étiré »)
         self._traces: Dict[str, _Trace] = {}
         self._main_ax = None
         self.draw([])
@@ -169,7 +172,7 @@ class PlotManager:
         for s, color in zip(series, _colors(len(series))):
             target = axes.get(s.quantity, ax)
             (line,) = target.plot([], [], color=color, linewidth=1.0, label=s.label, gid=s.gid)
-            trace = _Trace(line, s.x, s.y, s.shiftable)
+            trace = _Trace(line, s.x, s.y, s.shiftable, s.index_base)
             self._traces[s.gid] = trace
             self._refresh(trace, None)
             handles.append(line)
@@ -189,9 +192,14 @@ class PlotManager:
             axes[HUMIDITY].set_ylabel("Humidité (%HR)", color="#2166ac")
             axes[HUMIDITY].tick_params(axis="y", colors="#2166ac")
 
-        ax.xaxis.set_major_formatter(FuncFormatter(format_axis_time))
-        ax.xaxis.set_major_locator(TimeLocator())
-        ax.set_xlabel("Temps (H:MM:SS)")
+        if self.percent_axis:
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _pos=None: "{:g} %".format(round(v, 1))))
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
+            ax.set_xlabel("Avancement (% de la durée de chaque fichier)")
+        else:
+            ax.xaxis.set_major_formatter(FuncFormatter(format_axis_time))
+            ax.xaxis.set_major_locator(TimeLocator())
+            ax.set_xlabel("Temps (H:MM:SS)")
         ax.grid(True, alpha=0.3)
         ax.format_coord = self._format_coord
         if title:
@@ -217,12 +225,14 @@ class PlotManager:
 
     def original_index(self, gid: str, plotted_index: int) -> int:
         """Indice dans les données complètes d'un point tracé."""
-        return int(self._traces[gid].index[plotted_index])
+        trace = self._traces[gid]
+        return int(trace.index_base + trace.index[plotted_index])
 
     def update_data(self, gid: str, y) -> None:
         """Nouvelles valeurs d'une courbe (après correction), sans retracer le reste."""
         trace = self._traces[gid]
-        trace.y = np.asarray(y, dtype=float)
+        y = np.asarray(y, dtype=float)
+        trace.y = y[trace.index_base:trace.index_base + len(trace.x)]
         self._refresh(trace, self._view())
         self.figure.canvas.draw_idle()
 
@@ -247,9 +257,9 @@ class PlotManager:
         trace.index = decimate_indices(trace.y, start, max(start, stop))
         trace.line.set_data(trace.x[trace.index] + offset, trace.y[trace.index])
 
-    @staticmethod
-    def _format_coord(x, y):
-        return "t = {}   y = {:.6g}".format(format_hms(x), y)
+    def _format_coord(self, x, y):
+        t = "{:.2f} %".format(x) if self.percent_axis else format_hms(x)
+        return "t = {}   y = {:.6g}".format(t, y)
 
     @staticmethod
     def _place_legend(ax, top_ax, handles, n_twins: int) -> None:

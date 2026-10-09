@@ -122,6 +122,19 @@ def main():
     print("deux essais :", warnings[-1][2].splitlines()[-1][:120])
     shot(root, "8_deux_essais.png")
 
+    # Même essai GL980 + nanodac : période commune, puis durée étirée
+    gui.session.clear()
+    gui._checked.clear()
+    gui.open_files(EXAMPLES)
+    wait_idle(root, gui)
+    for label in ("Période commune", "Durée étirée (0-100 %)"):
+        gui.time_mode_var.set(label)
+        gui._on_time_mode()
+        print(label, ":", gui.lbl_window.cget("text"))
+        shot(root, "9_{}.png".format("commune" if "commune" in label else "etiree"))
+    gui.time_mode_var.set("Heure réelle")
+    gui._on_time_mode()
+
     if len(sys.argv) > 2:  # gros fichier : indicateur de chargement + temps total
         gui.session.clear()
         gui._checked.clear()

@@ -42,6 +42,20 @@ python main.py
 5. Curseur **Décalage enceinte climatique** : recale les courbes du nanodac si l'enceinte est en retard.
 6. **Exporter en CSV…** : fichier `;` prêt pour Excel.
 
+### Superposer plusieurs fichiers
+
+Réglage **Base de temps** :
+
+| Mode | Quand l'utiliser |
+|---|---|
+| Heure réelle | même essai, appareils à l'heure (par défaut) |
+| Période commune | même essai : tous les fichiers commencent et finissent ensemble |
+| Débuts à 0 | horloges des appareils pas à l'heure |
+| Durée étirée (0-100 %) | comparer des essais de durées différentes (le temps est déformé) |
+
+**Grille d'export** : celle du fichier de référence, ou une grille commune (100 ms, 1 s,
+10 s, 1 min) pour avoir une valeur de chaque appareil sur chaque ligne du CSV.
+
 ![Multi-axes](docs/captures/3-multi-axes.png)
 *Toutes les voies : V / A à gauche, °C et %HR à droite.*
 
