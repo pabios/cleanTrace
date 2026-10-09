@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.dev-out/
+.spyproject/
+.ipynb_checkpoints/
+cleantrace_export*.csv
+.DS_Store
