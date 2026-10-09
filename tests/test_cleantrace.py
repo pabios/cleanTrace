@@ -13,26 +13,27 @@ from cleantrace.plotting import format_hms
 from cleantrace.session import Session
 
 EXAMPLES = Path(__file__).resolve().parent.parent / "exemples"
-ALL_EXAMPLES = ["essai_Graphset.csv", "essai_Graphtec.csv", "essai_Nanodac.txt", "essai_Clim.csv"]
+ALL_EXAMPLES = ["essai_GL980.csv", "essai_nanodac.csv"]
+GL980 = "essai_GL980.csv"
+NANODAC = "essai_nanodac.csv"
+SHUNT = (GL980, "Channel 2 - Courant shunt (mV)")
 
 
 # ------------------------------------------------------------------- US-01 import
 
 
 @pytest.mark.parametrize(
-    "filename, source, sep, encoding, period_s, n_channels",
+    "filename, source, sep, decimal, period_s, n_channels",
     [
-        ("essai_Graphset.csv", "Graphset", ";", "utf-8", 1.0, 2),
-        ("essai_Graphtec.csv", "Graphtec", ",", "utf-8", 0.5, 3),
-        ("essai_Nanodac.txt", "Nanodac", "\t", "cp1252", 10.0, 2),
-        ("essai_Clim.csv", "Clim", ";", "cp1252", 60.0, 2),
+        (GL980, "Graphtec", ",", ".", 0.5, 3),
+        (NANODAC, "Nanodac", "\t", ",", 10.0, 3),
     ],
 )
-def test_import_examples(filename, source, sep, encoding, period_s, n_channels):
+def test_import_examples(filename, source, sep, decimal, period_s, n_channels):
     m = load_measurement(EXAMPLES / filename)
     assert m.source == source
     assert m.separator == sep
-    assert m.encoding == encoding
+    assert m.decimal == decimal
     assert m.period_s == pytest.approx(period_s)
     assert len(m.channels) == n_channels
     assert m.start is not None
@@ -40,18 +41,57 @@ def test_import_examples(filename, source, sep, encoding, period_s, n_channels):
     assert m.duration_min == pytest.approx(120, abs=1.1)
 
 
-def test_graphtec_labels_and_ms_column():
-    m = load_measurement(EXAMPLES / "essai_Graphtec.csv")
-    assert [c.label for c in m.channels] == ["Channel 1 (mV)", "Channel 2 (mV)", "Channel 3 (mV)"]
+def test_gl980_amp_settings_and_over_range():
+    m = load_measurement(EXAMPLES / GL980)
+    # noms de signaux et unités du tableau « Amp settings », voie CH4 (Off) ignorée,
+    # colonnes d'alarme (texte) ignorées
+    assert [c.label for c in m.channels] == [
+        "Channel 1 - Tension cellule (V)", SHUNT[1], "Channel 3 - T cellule (°C)",
+    ]
     assert m.start == pd.Timestamp("2026-10-01 09:00:30")
+    assert m.period_s == pytest.approx(0.5)  # colonne « ms » prise en compte
+    assert m.data[SHUNT[1]].isna().sum() == 12  # « +++++++ » / « ------- »
+    assert any("hors échelle" in w for w in m.warnings)
+    assert not m.is_thermal
 
 
-def test_alignment_on_graphset_reference():
+def test_nanodac_spreadsheet_date_and_ascii_units():
+    m = load_measurement(EXAMPLES / NANODAC)
+    assert [c.label for c in m.channels] == ["T enceinte (°C)", "HR enceinte (%HR)", "Consigne T (°C)"]
+    assert m.start == pd.Timestamp("2026-10-01 09:00:00")  # 46296,375 jours depuis 1899
+    assert m.is_thermal
+
+
+def test_nanodac_text_date_comma_separator(tmp_path):
+    f = tmp_path / "nanodac_texte.csv"
+    f.write_bytes(
+        b"Instrument,nanodac\r\n\r\n"
+        b"Date/Time,Four Z1,Messages\r\n,degC,\r\n"
+        b"01/10/2026 09:00:00,25.1,\r\n"
+        b"01/10/2026 09:00:01,25.2,Alarm 1 on\r\n"
+        b"01/10/2026 09:00:02,25.3,\r\n"
+    )
+    m = load_measurement(f)
+    assert [c.label for c in m.channels] == ["Four Z1 (°C)"]
+    assert m.start == pd.Timestamp("2026-10-01 09:00:00")
+    assert m.period_s == 1.0
+
+
+def test_alignment_reference_is_longest_file():
     ms = [load_measurement(EXAMPLES / f) for f in ALL_EXAMPLES]
     ref = align_time_axes(ms)
-    assert ref.source == "Graphset"
-    graphtec = ms[1]
-    assert graphtec.data[TIME_COL].iloc[0] == pytest.approx(0.5)  # démarre 30 s après
+    assert ref.name == GL980
+    nanodac = ms[1]
+    assert nanodac.data[TIME_COL].iloc[0] == pytest.approx(-0.5)  # démarre 30 s avant
+
+
+def test_graphset_is_preferred_reference(tmp_path):
+    a = tmp_path / "graphset.csv"
+    b = tmp_path / "long.csv"
+    a.write_text("Temps (s);U (V)\n0;1\n1;1\n2;1\n3;1\n")
+    b.write_text("Temps (s);U (V)\n0;1\n1;1\n2;1\n3;1\n4;1\n5;1\n")
+    ms = [load_measurement(a), load_measurement(b)]
+    assert align_time_axes(ms).path == a
 
 
 def test_reference_is_longest_without_graphset(tmp_path):
@@ -196,12 +236,23 @@ def test_options_disable_treatments():
     assert report.total == 0
 
 
+def test_short_over_range_gaps_repaired():
+    y = square_wave()
+    y[150] = np.nan  # « +++++++ » isolé sur le palier
+    y[[20, 21]] = np.nan
+    y[250:300] = np.nan  # longue coupure : reste vide
+    out, n = remove_saturation_peaks(y)
+    assert n == 3
+    assert out[150] == 2.0 and out[20] == 0.0
+    assert np.isnan(out[250:300]).all()
+
+
 def test_nan_values_are_kept():
     y = square_wave()
-    y[10] = np.nan
+    y[10:30] = np.nan  # coupure de mesure plus longue qu'un pic : pas inventée
     y[150] = 5.0
     out, n = remove_saturation_peaks(y)
-    assert np.isnan(out[10]) and n == 1
+    assert np.isnan(out[10:30]).all() and n == 1
 
 
 # ------------------------------------------------------------ US-04 / US-05
@@ -249,15 +300,16 @@ def test_click_correction_on_figure():
 def test_session_end_to_end(tmp_path):
     s = Session()
     loaded, errors = s.load_files([EXAMPLES / f for f in ALL_EXAMPLES])
-    assert len(loaded) == 4 and not errors
+    assert len(loaded) == 2 and not errors
     keys = s.all_keys()
-    assert len(keys) == 9
+    assert len(keys) == 6
 
-    shunt = ("essai_Graphtec.csv", "Channel 2 (mV)")
+    shunt = SHUNT
     raw = s.measurements[shunt[0]].data[shunt[1]].to_numpy().copy()
     report = s.apply_cleaning([shunt], CleaningOptions())
     cleaned = s.measurements[shunt[0]].data[shunt[1]].to_numpy()
     assert report.peak_points > 0 and report.noise_points > 0
+    assert np.isnan(cleaned).sum() == 0  # valeurs hors échelle réparées
     assert np.nanmax(cleaned) < 120  # plus de saturation à 1000 mV
     assert np.nanmax(cleaned) > 95  # mais les paliers de charge (100 mV) sont intacts
 
@@ -266,6 +318,11 @@ def test_session_end_to_end(tmp_path):
     s.restore_raw([shunt])
     np.testing.assert_array_equal(s.measurements[shunt[0]].data[shunt[1]].to_numpy(), raw)
 
+    # seul le fichier de l'enceinte suit le curseur de décalage
+    shiftable = {sr.label: sr.shiftable for sr in s.series(keys)}
+    assert shiftable["T enceinte (°C) — essai_nanodac.csv"]
+    assert not shiftable["Channel 3 - T cellule (°C) — essai_GL980.csv"]
+
     s.time_offset_min = -4
     out = tmp_path / "export.csv"
     df = s.export_csv(out, keys)
@@ -273,7 +330,7 @@ def test_session_end_to_end(tmp_path):
     text = out.read_text(encoding="utf-8-sig")
     header = text.splitlines()[0].split(";")
     assert header[:2] == ["Time_min", "Temps (H:MM:SS)"]
-    assert "essai_Clim.csv | Température (°C)" in header
+    assert "essai_nanodac.csv | T enceinte (°C)" in header
     back = pd.read_csv(out, sep=";", decimal=",", encoding="utf-8-sig")
     assert back.shape == df.shape
 
@@ -282,5 +339,5 @@ def test_session_reports_bad_file(tmp_path):
     bad = tmp_path / "vide.csv"
     bad.write_text("")
     s = Session()
-    loaded, errors = s.load_files([EXAMPLES / "essai_Clim.csv", bad])
+    loaded, errors = s.load_files([EXAMPLES / NANODAC, bad])
     assert len(loaded) == 1 and len(errors) == 1 and "vide.csv" in errors[0]

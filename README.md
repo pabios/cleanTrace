@@ -39,7 +39,7 @@ python main.py
 2. Cocher les voies à afficher.
 3. **Nettoyer** : supprime le bruit de repos (< 10 mA, < 5 mV) et les pics de saturation.
 4. **Clic gauche** sur un point abîmé pour le corriger (interpolation avec ses voisins).
-5. Curseur **Décalage température** : recale l'enceinte climatique si elle est en retard.
+5. Curseur **Décalage enceinte climatique** : recale les courbes du nanodac si l'enceinte est en retard.
 6. **Exporter en CSV…** : fichier `;` prêt pour Excel.
 
 ![Multi-axes](docs/captures/3-multi-axes.png)
@@ -49,8 +49,15 @@ python main.py
 
 ## Formats reconnus
 
-CSV, TXT, DAT · séparateur `;` `,` ou tabulation · encodage utf-8, cp1252 ou latin-1 ·
-temps en date/heure, `H:MM:SS`, ms, s ou min. Tout est détecté automatiquement.
+Prévu pour les enregistreurs **Graphtec GL980** (export CSV, tableau « Amp settings »,
+valeurs hors échelle `+++++++`) et **Eurotherm nanodac** (archive CSV, date en texte ou
+en nombre Excel, tabulation ou virgule). Un exemple de chacun est fourni dans `exemples/`.
+
+Plus généralement : CSV, TXT ou DAT · séparateur `;` `,` ou tabulation · encodage utf-8,
+cp1252 ou latin-1 · temps en date/heure, `H:MM:SS`, ms, s ou min. Tout est détecté
+automatiquement.
+
+Un fichier ne s'ouvre pas ? Ouvrez une issue en joignant le fichier (quelques lignes suffisent).
 
 ---
 

@@ -48,12 +48,12 @@ def main():
     shot(root, "0_accueil.png")
 
     gui.open_files(EXAMPLES)
-    assert len(gui.session.measurements) == 4, dialogs
+    assert len(gui.session.measurements) == 2, dialogs
     shot(root, "1_import.png")
 
     # Afficher uniquement le shunt Graphtec + la température enceinte
     gui.select_all(False)
-    shunt = ("essai_Graphtec.csv", "Channel 2 (mV)")
+    shunt = ("essai_GL980.csv", "Channel 2 - Courant shunt (mV)")
     gui._checked[shunt] = True
     gui._refresh_checkmarks()
     gui.redraw()

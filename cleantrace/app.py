@@ -109,7 +109,7 @@ class CleanTraceApp:
         ttk.Button(row, text="Restaurer les données brutes", command=self.restore_selected).pack(side=tk.LEFT, padx=4)
 
         # --- US-04 : décalage temporel des courbes climatiques
-        shift = ttk.LabelFrame(side, text="Décalage température / humidité (min)", padding=6)
+        shift = ttk.LabelFrame(side, text="Décalage enceinte climatique (min)", padding=6)
         shift.pack(fill=tk.X, pady=(6, 0))
         self.offset_var = tk.DoubleVar(value=0.0)
         self.offset_scale = tk.Scale(

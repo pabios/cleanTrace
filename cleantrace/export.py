@@ -39,30 +39,23 @@ def merge_selection(
 
     for name, labels in wanted.items():
         m = by_name[name]
-        # Les voies climatiques sont décalées comme à l'écran
-        groups = {
-            False: [lb for lb in labels if not m.channel(lb).is_climatic],
-            True: [lb for lb in labels if m.channel(lb).is_climatic],
-        }
-        for shifted, cols in groups.items():
-            if not cols:
-                continue
-            part = m.data[[TIME_COL] + cols].copy()
-            if shifted:
-                part[TIME_COL] = part[TIME_COL] + time_offset_min
-            part = part.rename(columns={c: _column_name(name, c, several_files) for c in cols})
-            if m is reference and not shifted:
-                for c in cols:
-                    out[_column_name(name, c, several_files)] = part[_column_name(name, c, several_files)].to_numpy()
-                continue
-            tolerance = m.period_s / 60.0 if np.isfinite(m.period_s) else None
-            merged = pd.merge_asof(
-                base, part.sort_values(TIME_COL), on=TIME_COL,
-                direction="nearest", tolerance=tolerance,
-            )
-            for c in part.columns:
-                if c != TIME_COL:
-                    out[c] = merged[c].to_numpy()
+        # Les fichiers d'enceinte climatique sont décalés comme à l'écran
+        shifted = m.is_thermal
+        part = m.data[[TIME_COL] + labels].copy()
+        if shifted:
+            part[TIME_COL] = part[TIME_COL] + time_offset_min
+        part = part.rename(columns={c: _column_name(name, c, several_files) for c in labels})
+        if m is reference and not shifted:
+            for c in part.columns[1:]:
+                out[c] = part[c].to_numpy()
+            continue
+        tolerance = m.period_s / 60.0 if np.isfinite(m.period_s) else None
+        merged = pd.merge_asof(
+            base, part.sort_values(TIME_COL), on=TIME_COL,
+            direction="nearest", tolerance=tolerance,
+        )
+        for c in part.columns[1:]:
+            out[c] = merged[c].to_numpy()
 
     out.insert(1, "Temps (H:MM:SS)", [format_hms(t) for t in out[TIME_COL]])
     return out

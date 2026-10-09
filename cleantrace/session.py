@@ -105,7 +105,7 @@ class Session:
                     y=m.data[label].to_numpy(dtype=float),
                     unit=ch.unit,
                     quantity=ch.quantity,
-                    shiftable=ch.is_climatic,
+                    shiftable=m.is_thermal,
                 )
             )
         return out

@@ -151,8 +151,13 @@ def remove_saturation_peaks(
         smoothed = gaussian_filter1d(work, sigma, mode="nearest")
         work[repaired] = smoothed[repaired]
 
-    work[~finite] = np.nan
-    return work, int(repaired.sum())
+    # Trous courts (valeurs hors échelle « +++++++ » de la centrale) : comblés par
+    # interpolation avec les voisins. Les longues absences de mesure restent vides.
+    short_gaps = _narrow(~finite, max_width)
+    short_gaps[: np.argmax(finite)] = False
+    short_gaps[len(finite) - np.argmax(finite[::-1]):] = False
+    work[~finite & ~short_gaps] = np.nan
+    return work, int(repaired.sum() + short_gaps.sum())
 
 
 # ----------------------------------------------------------------------- utilitaires

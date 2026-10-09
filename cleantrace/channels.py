@@ -101,8 +101,11 @@ def quantity_of(unit: str) -> str:
     return _QUANTITY_BY_UNIT.get(unit, OTHER)
 
 
-def make_channel(raw: str, unit: Optional[str] = None) -> Channel:
-    """Construit une voie avec un libellé lisible à partir du nom brut de la colonne."""
+def make_channel(raw: str, unit: Optional[str] = None, alias: str = "") -> Channel:
+    """Construit une voie avec un libellé lisible à partir du nom brut de la colonne.
+
+    ``alias`` : nom donné à la voie dans la centrale (ex. « Signal name » Graphtec).
+    """
     name, found_unit = split_name_unit(raw)
     unit = normalize_unit(unit) if unit else found_unit
 
@@ -121,5 +124,8 @@ def make_channel(raw: str, unit: Optional[str] = None) -> Channel:
         unit = "%HR"
 
     name = name or raw.strip() or "Voie"
+    alias = " ".join(alias.split())
+    if alias and alias.lower() not in (raw.strip().lower(), name.lower()):
+        name = "{} - {}".format(name, alias)
     label = "{} ({})".format(name, unit) if unit else name
     return Channel(raw_name=raw, label=label, unit=unit, quantity=quantity_of(unit))

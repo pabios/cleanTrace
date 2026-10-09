@@ -38,7 +38,10 @@ _TIME_NAME_RE = re.compile(
     r"(time|temps|date|heure|hour|elapsed|dur[ée]e|horodat|timestamp|^t$)", re.IGNORECASE
 )
 _DATE_ONLY_NAME_RE = re.compile(r"^date$", re.IGNORECASE)
-_MS_NAME_RE = re.compile(r"^(ms|msec)$", re.IGNORECASE)
+_SUBSECOND_NAME_RE = re.compile(r"^(ms|msec|us|µs)$", re.IGNORECASE)
+_SUBSECOND_FACTOR = {"ms": 1e-3, "msec": 1e-3, "us": 1e-6, "µs": 1e-6}
+# Valeurs hors échelle écrites par les centrales à la place d'un nombre
+_OVER_RANGE_RE = re.compile(r"^([+\-])\1{2,}$|^(burnout|over|under|overrange|underrange|-?ovf|err)$", re.IGNORECASE)
 _INDEX_NAME_RE = re.compile(r"^(no\.?|n°|num(ber|[ée]ro)?|index|#|id|ligne)$", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"^[+-]?(\d+([.,]\d*)?|[.,]\d+)([eE][+-]?\d+)?$")
 _DECIMAL_COMMA_RE = re.compile(r"^[+-]?\d*,\d+([eE][+-]?\d+)?$")
@@ -81,6 +84,14 @@ class Measurement:
     @property
     def duration_min(self) -> float:
         return float(self.elapsed_min[-1]) if len(self.elapsed_min) else 0.0
+
+    @property
+    def is_thermal(self) -> bool:
+        """Fichier d'enceinte climatique : uniquement des voies °C / %HR (ex. nanodac).
+
+        Ses courbes suivent le curseur de décalage temporel (retard du banc thermique).
+        """
+        return all(ch.is_climatic for ch in self.channels)
 
     @property
     def period_label(self) -> str:
@@ -172,6 +183,9 @@ def _load(path: Path, name: str) -> Measurement:
             "(aucune ligne de mesure reconnue).".format(path.name)
         )
     headers, units = _find_headers(rows, first_data, n_cols, decimal)
+    signal_names = _graphtec_amp_settings(rows[:first_data])
+    for col, (_, unit) in signal_names.items():
+        units.setdefault(col, unit)
 
     data_rows = [r for r in rows[first_data:] if len(r) == n_cols]
     skipped = len(rows) - first_data - len(data_rows)
@@ -183,13 +197,16 @@ def _load(path: Path, name: str) -> Measurement:
     # Voies de mesure : toutes les autres colonnes numériques
     channels: List[Channel] = []
     values = {}
+    over_range = 0
     for col in raw.columns:
         if col in used_cols or _INDEX_NAME_RE.match(col.strip()) or not col.strip():
             continue
         numeric = _to_numeric(raw[col], decimal)
         if numeric.notna().sum() == 0:
-            continue  # colonne de texte (alarmes, commentaires...)
-        ch = make_channel(col, units.get(col))
+            continue  # colonne de texte (alarmes, messages...)
+        over_range += int(raw[col].str.match(_OVER_RANGE_RE).sum())
+        alias = signal_names.get(col, ("", ""))[0]
+        ch = make_channel(col, units.get(col), alias=alias)
         label = _unique(ch.label, values)
         if label != ch.label:
             ch = Channel(ch.raw_name, label, ch.unit, ch.quantity)
@@ -210,7 +227,10 @@ def _load(path: Path, name: str) -> Measurement:
 
     msgs = []
     if skipped:
-        msgs.append("{} ligne(s) mal formée(s) ignorée(s).".format(skipped))
+        msgs.append("{} ligne(s) hors tableau ignorée(s) (messages, lignes incomplètes).".format(skipped))
+    if over_range:
+        msgs.append("{} valeur(s) hors échelle (+++++++, BURNOUT...) laissées vides : "
+                    "« Nettoyer » répare les plus courtes.".format(over_range))
     if not df["_t"].is_monotonic_increasing:
         df = df.sort_values("_t", kind="mergesort")
         msgs.append("Points remis dans l'ordre chronologique.")
@@ -259,7 +279,7 @@ def _detect_separator(lines: List[str], filename: str) -> str:
     for sep in SEPARATORS:
         counts = [len(r) for r in csv.reader(sample, delimiter=sep)]
         value, freq = Counter(counts).most_common(1)[0]
-        if value >= 2 and freq >= 0.9 * len(counts):
+        if value >= 2 and freq >= 0.6 * len(counts):
             return sep
     raise LoadError(
         "Impossible de détecter le séparateur de colonnes du fichier « {} » "
@@ -302,10 +322,13 @@ def _find_first_data_row(rows, n_cols, decimal) -> Optional[int]:
     return None
 
 
+_UNIT_CELL_RE = re.compile(r"^[%°ºµA-Za-z/.\- ]{0,8}$")
+
+
 def _looks_like_unit_row(row: List[str]) -> bool:
-    known = {"mv", "v", "a", "ma", "°c", "degc", "%", "%hr", "%rh", "s", "ms", "min", "h", ""}
-    cells = [c.strip().strip('"').strip("()[]").lower() for c in row]
-    return any(cells) and all(c in known for c in cells)
+    """Ligne d'unités sous les en-têtes : « "","","","V","mV","degC" »."""
+    cells = [c.strip().strip('"').strip("()[]") for c in row]
+    return any(cells) and all(_UNIT_CELL_RE.match(c) for c in cells)
 
 
 def _find_headers(rows, first_data, n_cols, decimal):
@@ -330,6 +353,26 @@ def _find_headers(rows, first_data, n_cols, decimal):
         headers[0] = "Temps"
         return headers, units
     return _dedupe([h.strip().strip('"') for h in header_row]), units
+
+
+def _graphtec_amp_settings(preamble: List[List[str]]):
+    """Tableau « Amp settings » des centrales Graphtec : {"CH1": ("nom du signal", "unité")}."""
+    out = {}
+    columns = None
+    for row in preamble:
+        cells = [c.strip().strip('"') for c in row]
+        lowered = [c.lower() for c in cells]
+        if lowered and lowered[0] == "ch" and "signal name" in lowered:
+            columns = lowered
+            continue
+        if columns and cells and re.match(r"^CH\d", cells[0], re.IGNORECASE):
+            info = dict(zip(columns, cells))
+            if info.get("input", "").lower() == "off":
+                continue
+            out[cells[0]] = (info.get("signal name", ""), normalize_unit(info.get("unit", "")))
+        elif columns and cells and cells[0]:
+            columns = None  # fin du tableau
+    return out
 
 
 def _dedupe(names: List[str]) -> List[str]:
@@ -366,8 +409,8 @@ def _extract_time(raw: pd.DataFrame, decimal: str, filename: str):
     """Renvoie (temps écoulé en secondes, horodatage de départ ou None, colonnes utilisées)."""
     cols = list(raw.columns)
     names = {c: split_name_unit(c)[0] for c in cols}
-    time_cols = [c for c in cols if _TIME_NAME_RE.search(names[c]) and not _MS_NAME_RE.match(names[c])]
-    ms_cols = [c for c in cols if _MS_NAME_RE.match(names[c])]
+    time_cols = [c for c in cols if _TIME_NAME_RE.search(names[c]) and not _SUBSECOND_NAME_RE.match(names[c])]
+    ms_cols = [c for c in cols if _SUBSECOND_NAME_RE.match(names[c])]
 
     if not time_cols:
         # Pas de nom explicite : la première colonne non-index est le temps
@@ -391,9 +434,10 @@ def _extract_time(raw: pd.DataFrame, decimal: str, filename: str):
 
     # Graphtec : colonne "ms" séparée qui complète l'horodatage à la seconde
     if ms_cols and start is not None:
-        ms = _to_numeric(raw[ms_cols[0]], decimal)
-        if ms.notna().mean() > 0.9:
-            seconds = seconds + ms.fillna(0).to_numpy(dtype=float) / 1000.0
+        sub = _to_numeric(raw[ms_cols[0]], decimal)
+        if sub.notna().mean() > 0.9:
+            factor = _SUBSECOND_FACTOR[split_name_unit(ms_cols[0])[0].lower()]
+            seconds = seconds + sub.fillna(0).to_numpy(dtype=float) * factor
             used.add(ms_cols[0])
 
     for c in cols:  # les autres colonnes date/heure ne sont pas des voies
@@ -422,7 +466,8 @@ def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
         elif 20000 < first < 80000 and 0 < step < 1:
             # Date série Excel (jours depuis le 30/12/1899)
             start = pd.Timestamp("1899-12-30") + pd.to_timedelta(first, unit="D")
-            return (values - first) * 86400.0, start.round("ms")
+            # arrondi à la ms : les dates série n'ont que ~8 décimales
+            return np.round((values - first) * 86400.0, 3), start.round("ms")
         else:
             factor = 1.0  # secondes par défaut
         return (values - first) * factor, None
