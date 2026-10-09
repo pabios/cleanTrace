@@ -204,6 +204,7 @@ class CleanTraceApp:
         if loaded:
             self._set_status("{} fichier(s) chargé(s).".format(len(loaded)))
             notes = ["• {} : {}".format(m.name, " ".join(m.warnings)) for m in loaded if m.warnings]
+            notes += ["• " + m.align_note for m in self.session.measurements.values() if m.align_note]
             if notes:
                 messagebox.showwarning("Import", "Fichiers chargés avec remarques :\n\n" + "\n".join(notes),
                                        parent=self.root)

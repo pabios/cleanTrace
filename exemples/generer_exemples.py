@@ -11,8 +11,8 @@ exemples/
       « Position/Vernier settings », puis « Data » : Number;Date;Time;us;CH3…;Alarm;AlarmOut.
       100 ms. Pics de saturation et bruit de repos sur les courants.
 * nanodac_Rd_Z.txt              Eurotherm nanodac — tabulation, décimale « , », date
-      jj/mm/aa, une ligne d'en-tête dont l'unité est dans le descriptif de la voie :
-      « Date/Heure  Channel 2  (ENAN2);Group 1;M402-M210;°C ». 1 min.
+      jj/mm/aa, une ligne d'en-tête dont l'unité est dans le descriptif de la voie, dans
+      la même colonne : « Channel 2       (ENAN2);Group 1;M402-M210;°C ». 1 min.
 
 exemples/autres_formats/
 * GL860_1s.CSV                  Graphtec GL860 — « , » et décimale « . », en-tête double
@@ -134,7 +134,7 @@ def nanodac():
         temp[k] = temp[k - 1] + (target - temp[k - 1]) * (1 - np.exp(-60.0 / 150.0))
     temp += rng.normal(0, 0.08, len(t))
     stamps = GL980_START.floor("min") + pd.to_timedelta(t, unit="s")
-    lines = ["Date/Heure\tChannel 2\t\t(ENAN2);Group 1;M402-M210;°C"]
+    lines = ["Date/Heure\tChannel 2       (ENAN2);Group 1;M402-M210;°C"]
     for ts, v in zip(stamps, temp):
         lines.append("{}\t{}".format(ts.strftime("%d/%m/%y %H:%M:%S"), "{:.2f}".format(v).replace(".", ",")))
     (OUT / "nanodac_Rd_Z.txt").write_bytes(("\r\n".join(lines) + "\r\n").encode("cp1252"))

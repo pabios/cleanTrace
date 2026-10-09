@@ -43,8 +43,12 @@ _TIME_NAME_RE = re.compile(
 _DATE_ONLY_NAME_RE = re.compile(r"^date$", re.IGNORECASE)
 _SUBSECOND_NAME_RE = re.compile(r"^(ms|msec|us|µs)$", re.IGNORECASE)
 _SUBSECOND_FACTOR = {"ms": 1e-3, "msec": 1e-3, "us": 1e-6, "µs": 1e-6}
-# Valeurs hors échelle écrites par les centrales à la place d'un nombre
-_OVER_RANGE_RE = re.compile(r"^([+\-])\1{2,}$|^(burnout|over|under|overrange|underrange|-?ovf|err)$", re.IGNORECASE)
+# Valeurs hors échelle écrites par les centrales à la place d'un nombre.
+# Attention : les motifs passés aux méthodes .str de pandas doivent rester compatibles
+# avec RE2 (moteur utilisé quand pyarrow est installé, comme sous Anaconda) : pas de
+# référence arrière (\1) dans un motif.
+_OVER_RANGE_PATTERN = r"^(\+{3,}|-{3,}|(?i:burnout|over|under|overrange|underrange|-?ovf|err))$"
+_OVER_RANGE_RE = re.compile(_OVER_RANGE_PATTERN)
 _INDEX_NAME_RE = re.compile(r"^(no\.?|n°|num(ber|[ée]ro)?|index|#|id|ligne)$", re.IGNORECASE)
 _NUMBER_RE = re.compile(r"^[+-]?\s*(\d+([.,]\d*)?|[.,]\d+)([eE][+-]?\d+)?$")  # « + 24.003 » accepté
 _DECIMAL_COMMA_RE = re.compile(r"^[+-]?\s*\d*,\d+([eE][+-]?\d+)?$")
@@ -58,6 +62,7 @@ _WHOLE_QUOTED_RE = re.compile(r'^"(.*)"$', re.MULTILINE)
 _SAMPLING_RE = re.compile(r"^\s*(\d+(?:[.,]\d+)?)\s*(us|µs|ms|s|sec|min|h)\s*$", re.IGNORECASE)
 _DATETIME_LIKE_RE = re.compile(r"^\d{1,4}[/\-.]\d{1,2}[/\-.]\d{1,4}|^\d{1,3}:\d{2}")
 _DURATION_RE = re.compile(r"^\d+:\d{2}:\d{2}([.,]\d+)?$")
+_COMMA_SECONDS_RE = re.compile(r":\d{2},\d+$")
 _YEAR_FIRST_RE = re.compile(r"^\d{4}[/\-.]")
 _TIME_UNITS_S = {"ms": 1e-3, "msec": 1e-3, "s": 1.0, "sec": 1.0, "min": 60.0, "h": 3600.0}
 
@@ -90,6 +95,7 @@ class Measurement:
     period_s: float  # période d'échantillonnage détectée
     start: Optional[pd.Timestamp] = None  # horodatage absolu du 1er point, si disponible
     align_offset_min: float = 0.0  # décalage appliqué pour l'axe commun
+    align_note: str = ""  # explication si le fichier n'a pas pu être recalé sur la référence
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -158,12 +164,24 @@ def align_time_axes(measurements: Sequence[Measurement]) -> Optional[Measurement
 
     Si les fichiers sont horodatés, leurs débuts sont recalés sur celui de la référence ;
     sinon chaque fichier démarre à 0.
+    Un fichier qui ne recouvre pas du tout la période de la référence vient sans doute
+    d'un autre essai : il démarre alors aussi à 0 (pour comparer les courbes) et
+    ``align_note`` l'explique.
     """
     ref = choose_reference(measurements)
     for m in measurements:
         offset = 0.0
+        m.align_note = ""
         if ref is not None and m.start is not None and ref.start is not None:
             offset = (m.start - ref.start).total_seconds() / 60.0
+            overlaps = offset <= ref.duration_min and offset + m.duration_min >= 0
+            if not overlaps:
+                m.align_note = (
+                    "« {} » ({}) ne couvre pas la même période que la référence « {} » ({}) : "
+                    "autre essai ? Il est affiché à partir de 0 pour comparer les courbes.".format(
+                        m.name, m.start.strftime("%d/%m/%Y %H:%M"), ref.name, ref.start.strftime("%d/%m/%Y %H:%M"))
+                )
+                offset = 0.0
         m.align_offset_min = offset
         m.data[TIME_COL] = m.elapsed_min + offset
     return ref
@@ -246,7 +264,7 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
             if _to_numeric(column.dropna().head(500), decimal).notna().sum() == 0:
                 continue  # colonne de texte (alarmes, messages...) : inutile de tout convertir
             text = column.dropna().astype(str).str.strip()
-            over_range += int(text.str.match(_OVER_RANGE_RE).sum())
+            over_range += int(text.str.match(_OVER_RANGE_PATTERN).sum())
             column = _to_numeric(column, decimal)
         if column.notna().sum() == 0:
             continue  # colonne de texte (alarmes, messages...)
@@ -619,7 +637,15 @@ def _find_headers(rows, first_data, n_cols):
                 units[h] = normalize_unit(u)
         return headers, units, aliases
 
-    headers = _dedupe(candidate)
+    cleaned = []
+    for h in candidate:
+        name, unit, alias = _split_descriptor(h)
+        cleaned.append(name)
+        if unit:
+            units[name] = unit
+        if alias:
+            aliases[name] = alias
+    headers = _dedupe(cleaned)
     value_cols = [h for h in headers if not _is_time_header(h) and not _INDEX_NAME_RE.match(h)]
     if extra and len(value_cols) == 1:
         unit, alias = _channel_descriptor(extra)
@@ -628,6 +654,19 @@ def _find_headers(rows, first_data, n_cols):
         if alias:
             aliases[value_cols[0]] = alias
     return headers, units, aliases
+
+
+def _split_descriptor(header: str) -> Tuple[str, str, str]:
+    """« Channel 2   (ENAN2);Group 1;M402-M210;°C » -> ("Channel 2", "°C", "M402-M210").
+
+    Les en-têtes sans « ; » sont renvoyés tels quels.
+    """
+    if ";" not in header:
+        return header, "", ""
+    tokens = [t.strip() for t in header.split(";") if t.strip()]
+    name = re.sub(r"\s*\([^)]*\)\s*$", "", tokens[0]).strip() or tokens[0]
+    unit, alias = _channel_descriptor(tokens[1:])
+    return name, unit, alias
 
 
 def _channel_descriptor(cells: List[str]) -> Tuple[str, str]:
@@ -720,7 +759,8 @@ def _extract_time(raw: pd.DataFrame, decimal: str, filename: str):
     # Date et heure dans deux colonnes séparées ("Date" ; "Heure")
     if _DATE_ONLY_NAME_RE.match(names[main]) and len(time_cols) > 1:
         other = time_cols[1]
-        if not raw[main].str.contains(":", na=False).any() and raw[other].str.contains(":", na=False).any():
+        if (not raw[main].str.contains(":", regex=False, na=False).any()
+                and raw[other].str.contains(":", regex=False, na=False).any()):
             series = raw[main].fillna("") + " " + raw[other].fillna("")
             used.add(other)
 
@@ -776,14 +816,14 @@ def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
             factor = 1.0  # secondes par défaut
         return (values - first) * factor, None
 
-    if sample.str.match(_DURATION_RE).mean() > 0.9:
+    if np.mean([bool(_DURATION_RE.match(v)) for v in sample]) > 0.9:
         td = pd.to_timedelta(s.str.replace(",", ".", regex=False), errors="coerce")
         secs = td.dt.total_seconds().to_numpy(dtype=float)
         return secs - secs[np.isfinite(secs)][0], None
 
     # Date/heure absolue. "2026/10/01" -> année en tête ; "01/10/2026" -> jour en tête.
-    if sample.str.contains(r":\d{2},\d+$").any():  # secondes avec virgule décimale
-        s = s.str.replace(r"(:\d{2}),(\d+)$", r"\1.\2", regex=True)
+    if any(_COMMA_SECONDS_RE.search(v) for v in sample):  # « 17:01:39,500 »
+        s = s.str.replace(",", ".", regex=False)
     dt = _to_datetime(s)
     if dt.notna().mean() < 0.9:
         raise LoadError(

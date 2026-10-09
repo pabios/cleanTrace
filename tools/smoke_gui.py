@@ -111,6 +111,17 @@ def main():
     errors = [d for d in dialogs if d[0] == "error"]
     assert not errors, errors
 
+    # Deux essais sans rapport (GL860 du 10/09 + nanodac du 01/06) : chacun part de 0
+    gui.session.clear()
+    gui._checked.clear()
+    gui.open_files([str(ROOT / "exemples" / "autres_formats" / "GL860_1s.CSV"),
+                    str(ROOT / "exemples" / "nanodac_Rd_Z.txt")])
+    wait_idle(root, gui)
+    warnings = [d for d in dialogs if d[0] == "warning"]
+    assert warnings and "même période" in warnings[-1][2], warnings
+    print("deux essais :", warnings[-1][2].splitlines()[-1][:120])
+    shot(root, "8_deux_essais.png")
+
     if len(sys.argv) > 2:  # gros fichier : indicateur de chargement + temps total
         gui.session.clear()
         gui._checked.clear()

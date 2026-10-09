@@ -15,7 +15,12 @@ RUN="docker run --rm -v $(pwd):/app -w /app"
 
 case "${1:-test}" in
     build)    docker build -f docker/Dockerfile -t "$IMAGE" . ;;
-    test)     [ $# -gt 0 ] && shift; $RUN "$IMAGE" pytest -q -p no:cacheprovider "$@" ;;
+    test)     [ $# -gt 0 ] && shift
+              # deux fois : texte pandas en pur Python, puis avec pyarrow (comme sous Anaconda)
+              for storage in python pyarrow; do
+                  echo "== pandas texte : $storage"
+                  $RUN -e CLEANTRACE_STRING_STORAGE=$storage "$IMAGE" pytest -q -p no:cacheprovider "$@" || exit 1
+              done ;;
     gui)      $RUN -it -p 6080:6080 "$IMAGE" gui ;;
     smoke)    mkdir -p .dev-out; $RUN "$IMAGE" python tools/smoke_gui.py /app/.dev-out ;;
     examples) $RUN "$IMAGE" python exemples/generer_exemples.py ;;

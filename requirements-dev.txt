@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest>=7
+# Comme sous Anaconda : pandas utilise alors pyarrow (moteur regex RE2) pour le texte
+pyarrow

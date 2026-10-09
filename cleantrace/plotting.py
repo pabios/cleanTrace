@@ -13,7 +13,7 @@ from typing import Dict, List, Sequence
 
 import numpy as np
 from matplotlib import cm
-from matplotlib.ticker import FuncFormatter, MaxNLocator
+from matplotlib.ticker import FuncFormatter, Locator
 
 from .channels import HUMIDITY, TEMPERATURE
 
@@ -40,6 +40,40 @@ def format_hms(minutes: float, _pos=None) -> str:
     hours, rest = divmod(abs(total), 3600)
     mins, secs = divmod(rest, 60)
     return "{}{}:{:02d}:{:02d}".format(sign, hours, mins, secs)
+
+
+def format_axis_time(minutes: float, _pos=None) -> str:
+    """Graduation de l'axe X : « H:MM:SS », ou « 3 j 04:00 » au-delà de 48 h."""
+    if minutes is None or not math.isfinite(minutes):
+        return ""
+    if abs(minutes) < 48 * 60:
+        return format_hms(minutes)
+    total = int(round(minutes))
+    sign = "-" if total < 0 else ""
+    days, rest = divmod(abs(total), 1440)
+    return "{}{} j {:02d}:{:02d}".format(sign, days, rest // 60, rest % 60)
+
+
+class TimeLocator(Locator):
+    """Graduations à des pas de temps « ronds » (10 s, 1 min, 15 min, 1 h, 6 h, 1 j...)."""
+
+    STEPS_MIN = [1 / 60, 2 / 60, 5 / 60, 10 / 60, 15 / 60, 30 / 60, 1, 2, 5, 10, 15, 30,
+                 60, 120, 180, 360, 720, 1440, 2880, 7 * 1440, 14 * 1440, 30 * 1440, 90 * 1440]
+
+    def __init__(self, max_ticks: int = 8):
+        self.max_ticks = max_ticks
+
+    def __call__(self):
+        vmin, vmax = self.axis.get_view_interval()
+        return self.tick_values(vmin, vmax)
+
+    def tick_values(self, vmin, vmax):
+        if vmax < vmin:
+            vmin, vmax = vmax, vmin
+        span = max(vmax - vmin, 1e-9)
+        step = next((s for s in self.STEPS_MIN if span / s <= self.max_ticks), self.STEPS_MIN[-1])
+        start = math.ceil(vmin / step) * step
+        return np.arange(start, vmax + step * 1e-6, step)
 
 
 def _cmap(name: str):
@@ -155,8 +189,8 @@ class PlotManager:
             axes[HUMIDITY].set_ylabel("Humidité (%HR)", color="#2166ac")
             axes[HUMIDITY].tick_params(axis="y", colors="#2166ac")
 
-        ax.xaxis.set_major_formatter(FuncFormatter(format_hms))
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 6, 10]))
+        ax.xaxis.set_major_formatter(FuncFormatter(format_axis_time))
+        ax.xaxis.set_major_locator(TimeLocator())
         ax.set_xlabel("Temps (H:MM:SS)")
         ax.grid(True, alpha=0.3)
         ax.format_coord = self._format_coord

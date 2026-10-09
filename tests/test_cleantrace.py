@@ -71,6 +71,26 @@ def test_real_nanodac_unit_from_descriptor():
     assert m.start == pd.Timestamp("2026-06-01 16:57:00")  # année sur 2 chiffres
 
 
+def test_nanodac_descriptor_in_separate_column(tmp_path):
+    f = tmp_path / "Rd_Z.txt"
+    f.write_bytes("Date/Heure\tChannel 2\t\t(ENAN2);Group 1;M402-M210;°C\r\n"
+                  "03/06/26 16:42:00\t27,89\r\n03/06/26 16:43:00\t27,84\r\n03/06/26 16:44:00\t28,02\r\n"
+                  .encode("cp1252"))
+    m = load_measurement(f)
+    assert [c.label for c in m.channels] == ["Channel 2 - M402-M210 (°C)"]
+    assert m.start == pd.Timestamp("2026-06-03 16:42:00")
+
+
+def test_files_from_different_tests_start_at_zero():
+    """1s.CSV (10/09) et Rd_Z (03/06) : rien en commun, chacun démarre à 0 avec une explication."""
+    ms = [load_measurement(GL860), load_measurement(EXAMPLES / NANODAC)]
+    ref = align_time_axes(ms)
+    other = ms[0] if ref is ms[1] else ms[1]
+    assert other.data[TIME_COL].iloc[0] == 0
+    assert "même période" in other.align_note
+    assert ref.align_note == ""
+
+
 def test_real_gl860_double_header():
     """En-têtes sur deux lignes : No.,Date&Time,ms,CH1… puis NO.,Time,ms,V,mA…,A1234567890."""
     m = load_measurement(GL860)
@@ -352,6 +372,16 @@ def test_format_hms():
     assert format_hms(0) == "0:00:00"
     assert format_hms(61.5) == "1:01:30"
     assert format_hms(-0.5) == "-0:00:30"
+
+
+def test_time_axis_ticks_stay_readable():
+    from cleantrace.plotting import TimeLocator, format_axis_time
+
+    ticks = TimeLocator().tick_values(0, 140_000)  # ~97 jours (deux essais très éloignés)
+    assert 2 <= len(ticks) <= 9
+    assert format_axis_time(ticks[1]) == "14 j 00:00"
+    assert list(TimeLocator().tick_values(0, 40)) == [0, 5, 10, 15, 20, 25, 30, 35, 40]
+    assert format_axis_time(90) == "1:30:00"
 
 
 def test_interpolation_formula():
