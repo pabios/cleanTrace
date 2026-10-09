@@ -1,13 +1,14 @@
-"""Interface graphique Tkinter de CleanTrace.
+"""Interface graphique Tkinter de CleanTrace (thème : ``theme.py``, inspiré de shadcn/ui).
 
 Disposition :
-    ┌ barre d'outils : Ouvrir · Exporter · Réinitialiser ─────────────────────────┐
-    │ panneau gauche                      │ graphique Matplotlib + barre de zoom   │
-    │  - voies par fichier (cases à cocher)│                                        │
-    │  - nettoyage automatique            │                                        │
-    │  - décalage température / humidité  │                                        │
-    │  - correction au clic               │                                        │
-    └ barre d'état ───────────────────────────────────────────────────────────────┘
+    ┌ en-tête : CleanTrace · version ················ Aide · Réinitialiser · Exporter · Ouvrir ┐
+    │ panneau latéral (cartes)          │ carte « Graphique » : courbes + barre de zoom         │
+    │  - Voies de mesure                │                                                       │
+    │  - Nettoyage                      │                                                       │
+    │  - Base de temps                  │                                                       │
+    │  - Enceinte climatique            │                                                       │
+    │  - Correction au clic             │                                                       │
+    └ barre d'état ─────────────────────────────────────────────────────────────────────────────┘
 """
 from __future__ import annotations
 
@@ -26,20 +27,21 @@ from matplotlib.figure import Figure
 from . import __version__
 from .cleaning import CleaningOptions
 from .dialogs import CleaningDialog
-from .help import HelpWindow
 from .editing import ClickCorrector
 from .export import Key
+from .help import HelpWindow
 from .loader import write_extract
 from .plotting import PlotManager, format_hms
 from .session import EXPORT_STEPS, TIME_MODES, Session
+from .theme import C, CheckImages, ScrollFrame, apply_theme, bordered, card, separator
 
 APP_TITLE = "CleanTrace — MultiPlotter pour bancs d'essai"
-CHECKED, UNCHECKED, PARTIAL = "☑", "☐", "◩"
 FILE_TYPES = [
     ("Fichiers de mesure", "*.csv *.txt *.dat *.CSV *.TXT *.DAT"),
     ("Tous les fichiers", "*.*"),
 ]
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent / "exemples"
+EXAMPLE_FILES = ["GL980_Mes-_260601-170139.CSV", "nanodac_Rd_Z.txt"]
 
 
 class CleanTraceApp:
@@ -50,154 +52,213 @@ class CleanTraceApp:
         self._item_key: Dict[str, Key] = {}  # id Treeview -> voie
         self._file_item: Dict[str, str] = {}  # nom de fichier -> id Treeview
         self._gid_key: Dict[str, Key] = {}  # gid de courbe -> voie
+        self._key_color: Dict[Key, str] = {}  # voie -> couleur de sa courbe
         self._last_dir = str(EXAMPLES_DIR if EXAMPLES_DIR.is_dir() else Path.home())
         self.busy = False  # un traitement long tourne en arrière-plan
         self._action_buttons: List[ttk.Button] = []
 
         root.title("{}  (v{})".format(APP_TITLE, __version__))
-        root.geometry("1400x860")
-        root.minsize(1000, 640)
+        # Taille adaptée à l'écran (portable 1366×768 compris), sans jamais le dépasser
+        width = min(1440, root.winfo_screenwidth() - 40)
+        height = min(900, root.winfo_screenheight() - 90)
+        root.geometry("{}x{}+{}+{}".format(width, height, max(0, (root.winfo_screenwidth() - width) // 2), 20))
+        root.minsize(min(1000, width), min(600, height))
         root.report_callback_exception = self._on_unexpected_error
+        self.fonts = apply_theme(root)
+        self.check_images = CheckImages(root)
 
-        self._build_toolbar()
+        self._build_header()
+        self._build_statusbar()
         body = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
-        body.pack(fill=tk.BOTH, expand=True, padx=6, pady=(0, 4))
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
         body.add(self._build_sidebar(body), weight=0)
         body.add(self._build_plot(body), weight=1)
-        self._build_statusbar()
+        self._update_empty_state()
         self._set_status("Prêt. Ouvrez un ou plusieurs fichiers de mesure.")
 
     # ================================================================ construction
 
-    def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self.root, padding=(6, 6))
+    def _build_header(self) -> None:
+        bar = tk.Frame(self.root, background=C["card"])
         bar.pack(fill=tk.X)
-        for text, command, pad in (
-            ("Ouvrir des fichiers…", self.open_files, 0),
-            ("Exporter en CSV…", self.export_csv, 6),
-            ("Réinitialiser", self.reset_all, 0),
+        inner = ttk.Frame(bar, style="Card.TFrame", padding=(16, 10))
+        inner.pack(fill=tk.X)
+        separator(self.root)
+
+        brand = ttk.Frame(inner, style="Card.TFrame")
+        brand.pack(side=tk.LEFT)
+        logo = tk.Canvas(brand, width=28, height=28, background=C["card"], highlightthickness=0)
+        logo.create_rectangle(1, 1, 27, 27, fill=C["primary"], outline=C["primary"])
+        logo.create_line(6, 18, 11, 18, 14, 9, 17, 20, 20, 13, 23, 13, fill=C["primary_fg"], width=2)
+        logo.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(brand, text="CleanTrace", style="Brand.TLabel").pack(side=tk.LEFT)
+        ttk.Label(brand, text="v" + __version__, style="Badge.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(brand, text="Mesures de bancs d'essai", style="Muted.Card.TLabel").pack(side=tk.LEFT, padx=(12, 0))
+
+        actions = ttk.Frame(inner, style="Card.TFrame")
+        actions.pack(side=tk.RIGHT)
+        ttk.Button(actions, text="Aide", style="Ghost.TButton",
+                   command=lambda: HelpWindow.open(self.root)).pack(side=tk.LEFT, padx=(0, 6))
+        for text, command, style in (
+            ("Réinitialiser", self.reset_all, "TButton"),
+            ("Exporter en CSV…", self.export_csv, "TButton"),
+            ("Ouvrir des fichiers…", self.open_files, "Primary.TButton"),
         ):
-            button = ttk.Button(bar, text=text, command=command)
-            button.pack(side=tk.LEFT, padx=(0, pad))
+            button = ttk.Button(actions, text=text, command=command, style=style)
+            button.pack(side=tk.LEFT, padx=(0, 6))
             self._action_buttons.append(button)
-        ttk.Button(bar, text="Aide", command=lambda: HelpWindow.open(self.root)).pack(side=tk.LEFT, padx=(6, 0))
-        self.lbl_reference = ttk.Label(bar, text="", foreground="#555")
-        self.lbl_reference.pack(side=tk.RIGHT)
 
     def _build_sidebar(self, parent) -> ttk.Frame:
-        side = ttk.Frame(parent, padding=(0, 0, 6, 0), width=380)
+        scroll = self.sidebar = ScrollFrame(parent, width=410)
+        side = scroll.inner
 
         # --- US-02 : voies de mesure
-        box = ttk.LabelFrame(side, text="Voies de mesure", padding=6)
-        box.pack(fill=tk.BOTH, expand=True)
-        btns = ttk.Frame(box)
-        btns.pack(fill=tk.X, pady=(0, 4))
-        ttk.Button(btns, text="Tout sélectionner", command=lambda: self.select_all(True)).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Tout désélectionner", command=lambda: self.select_all(False)).pack(side=tk.LEFT, padx=4)
-
-        tree_frame = ttk.Frame(box)
+        outer, box = card(side, "Voies de mesure", "Cochez les voies à afficher, nettoyer et exporter.")
+        outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
+        row = ttk.Frame(box, style="Card.TFrame")
+        row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Button(row, text="Tout cocher", style="Small.TButton",
+                   command=lambda: self.select_all(True)).pack(side=tk.LEFT)
+        ttk.Button(row, text="Tout décocher", style="Small.TButton",
+                   command=lambda: self.select_all(False)).pack(side=tk.LEFT, padx=(6, 0))
+        tree_frame = ttk.Frame(box, style="Card.TFrame")
         tree_frame.pack(fill=tk.BOTH, expand=True)
-        self.tree = ttk.Treeview(tree_frame, columns=("info",), selectmode="none", height=14)
-        self.tree.heading("#0", text="Fichier / voie", anchor=tk.W)
-        self.tree.heading("info", text="Infos", anchor=tk.W)
-        self.tree.column("#0", width=215, stretch=True)
-        self.tree.column("info", width=150, stretch=False)
-        scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree = ttk.Treeview(tree_frame, selectmode="none", height=11, show="tree")
+        self.tree.column("#0", width=350, stretch=True)
+        self.tree.tag_configure("file", font=self.fonts.strong)
+        self.tree.tag_configure("off", foreground=C["muted_fg"])
+        tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_scroll.set)
         self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.tree.bind("<Button-1>", self._on_tree_click)
+        self.lbl_reference = ttk.Label(box, text="", style="Muted.Card.TLabel", wraplength=350, justify=tk.LEFT)
+        self.lbl_reference.pack(anchor=tk.W, pady=(8, 0))
 
         # --- US-03 : nettoyage automatique
-        clean = ttk.LabelFrame(side, text="Nettoyage automatique (voies cochées)", padding=6)
-        clean.pack(fill=tk.X, pady=(6, 0))
+        def help_action(section):
+            return lambda header: ttk.Button(header, text="?", style="Icon.TButton", width=2,
+                                             command=lambda: HelpWindow.open(self.root, section)).pack(side=tk.RIGHT)
+
+        outer, clean = card(side, "Nettoyage", "Pics de saturation et bruit de repos des voies cochées.",
+                            actions=help_action("Nettoyage"))
+        outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         self.chk_noise = tk.BooleanVar(value=True)
         self.chk_peaks = tk.BooleanVar(value=True)
-        ttk.Checkbutton(clean, text="Supprimer les pics de saturation",
-                        variable=self.chk_peaks).pack(anchor=tk.W)
-        ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos (seuil réglable par voie)",
-                        variable=self.chk_noise).pack(anchor=tk.W)
-        row = ttk.Frame(clean)
-        row.pack(fill=tk.X, pady=(4, 0))
-        for text, command, pad in (
-            ("Nettoyer…", self.clean_selected, 0),
-            ("Restaurer les données brutes", self.restore_selected, 4),
+        ttk.Checkbutton(clean, text="Supprimer les pics de saturation", variable=self.chk_peaks,
+                        style="Card.TCheckbutton").pack(anchor=tk.W)
+        ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos", variable=self.chk_noise,
+                        style="Card.TCheckbutton").pack(anchor=tk.W)
+        row = ttk.Frame(clean, style="Card.TFrame")
+        row.pack(fill=tk.X, pady=(10, 0))
+        for text, command, style in (
+            ("Nettoyer…", self.clean_selected, "Primary.TButton"),
+            ("Annuler le nettoyage", self.restore_selected, "TButton"),
         ):
-            button = ttk.Button(row, text=text, command=command)
-            button.pack(side=tk.LEFT, padx=pad)
+            button = ttk.Button(row, text=text, command=command, style=style)
+            button.pack(side=tk.LEFT, padx=(0, 6))
             self._action_buttons.append(button)
-        ttk.Button(row, text="?", width=3, command=lambda: HelpWindow.open(self.root, "Nettoyage")).pack(
-            side=tk.RIGHT)
 
         # --- Superposition de fichiers : base de temps et grille d'export
-        base = ttk.LabelFrame(side, text="Base de temps (superposition des fichiers)", padding=6)
-        base.pack(fill=tk.X, pady=(6, 0))
+        outer, base = card(side, "Base de temps", "Comment superposer plusieurs fichiers.",
+                           actions=help_action("Base de temps"))
+        outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         self.time_mode_var = tk.StringVar(value=TIME_MODES["real"])
         mode_box = ttk.Combobox(base, textvariable=self.time_mode_var, values=list(TIME_MODES.values()),
                                 state="readonly")
         mode_box.pack(fill=tk.X)
         mode_box.bind("<<ComboboxSelected>>", self._on_time_mode)
-        row = ttk.Frame(base)
-        row.pack(fill=tk.X, pady=(4, 0))
-        ttk.Label(row, text="Grille d'export :").pack(side=tk.LEFT)
+        self.lbl_window = ttk.Label(base, text="", style="Muted.Card.TLabel", wraplength=350, justify=tk.LEFT)
+        self.lbl_window.pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(base, text="Grille d'export", style="Strong.Card.TLabel").pack(anchor=tk.W, pady=(10, 4))
         self.export_step_var = tk.StringVar(value=EXPORT_STEPS[None])
-        step_box = ttk.Combobox(row, textvariable=self.export_step_var, values=list(EXPORT_STEPS.values()),
-                                state="readonly", width=26)
-        step_box.pack(side=tk.LEFT, padx=(4, 0), fill=tk.X, expand=True)
+        step_box = ttk.Combobox(base, textvariable=self.export_step_var, values=list(EXPORT_STEPS.values()),
+                                state="readonly")
+        step_box.pack(fill=tk.X)
         step_box.bind("<<ComboboxSelected>>", self._on_export_step)
-        self.lbl_window = ttk.Label(base, text="", foreground="#555", wraplength=350, justify=tk.LEFT)
-        self.lbl_window.pack(anchor=tk.W, pady=(4, 0))
 
         # --- US-04 : décalage temporel des courbes climatiques
-        shift = ttk.LabelFrame(side, text="Décalage enceinte climatique (min)", padding=6)
-        shift.pack(fill=tk.X, pady=(6, 0))
+        outer, shift = card(side, "Enceinte climatique",
+                            "Décale les courbes °C / %HR si l'enceinte réagit avec retard.")
+        outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
+        row = ttk.Frame(shift, style="Card.TFrame")
+        row.pack(fill=tk.X)
         self.offset_var = tk.DoubleVar(value=0.0)
-        self.offset_scale = tk.Scale(
-            shift, from_=-30, to=30, resolution=0.5, orient=tk.HORIZONTAL,
-            variable=self.offset_var, command=self._on_offset, showvalue=True,
-        )
+        self.offset_scale = ttk.Scale(row, from_=-30, to=30, orient=tk.HORIZONTAL,
+                                      variable=self.offset_var, command=self._on_offset)
         self.offset_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        ttk.Button(shift, text="0", width=3, command=lambda: self._set_offset(0.0)).pack(side=tk.LEFT, padx=(4, 0))
+        self.lbl_offset = ttk.Label(row, text="0,0 min", style="Card.TLabel", width=9, anchor=tk.E)
+        self.lbl_offset.pack(side=tk.LEFT, padx=(8, 6))
+        ttk.Button(row, text="0", style="Icon.TButton", width=2,
+                   command=lambda: self._set_offset(0.0)).pack(side=tk.LEFT)
 
         # --- US-05 : correction au clic
-        edit = ttk.LabelFrame(side, text="Correction manuelle", padding=6)
-        edit.pack(fill=tk.X, pady=(6, 0))
+        outer, edit = card(side, "Correction au clic",
+                           "Clic gauche sur un point abîmé : il est interpolé avec ses voisins.")
+        outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 4))
         self.chk_click_edit = tk.BooleanVar(value=True)
-        ttk.Checkbutton(edit, text="Corriger le point cliqué (clic gauche, interpolation)",
-                        variable=self.chk_click_edit).pack(anchor=tk.W)
-        ttk.Label(edit, text="Désactivée pendant le zoom / déplacement de la barre d'outils.",
-                  foreground="#777").pack(anchor=tk.W)
-        return side
+        ttk.Checkbutton(edit, text="Activée (sauf pendant zoom / déplacement)", variable=self.chk_click_edit,
+                        style="Card.TCheckbutton").pack(anchor=tk.W)
+        return scroll
 
-    def _build_plot(self, parent) -> ttk.Frame:
-        frame = ttk.Frame(parent)
-        self.figure = Figure(figsize=(10, 6), dpi=100)
+    def _build_plot(self, parent) -> tk.Frame:
+        outer = bordered(parent)
+        frame = ttk.Frame(outer, style="Card.TFrame", padding=(8, 8, 8, 4))
+        frame.pack(fill=tk.BOTH, expand=True)
+        self.figure = Figure(figsize=(10, 6), dpi=100, facecolor=C["card"])
         self.canvas = FigureCanvasTkAgg(self.figure, master=frame)
         toolbar = NavigationToolbar2Tk(self.canvas, frame, pack_toolbar=False)
         toolbar.update()
+        _flatten_toolbar(toolbar)
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        line = tk.Frame(frame, height=1, background=C["border"])
+        line.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 2))
+        widget = self.canvas.get_tk_widget()
+        widget.configure(background=C["card"], highlightthickness=0)
+        widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self.plot = PlotManager(self.figure)
         self.corrector = ClickCorrector(
             self.figure, self._on_point_clicked,
             is_enabled=lambda: self.chk_click_edit.get() and not self.busy,
         )
 
+        # État vide : invitation à ouvrir des fichiers
+        self.empty_panel, empty = card(frame, padding=28)
+        icon = tk.Canvas(empty, width=56, height=56, background=C["card"], highlightthickness=0)
+        icon.create_oval(2, 2, 54, 54, fill=C["muted"], outline=C["muted"])
+        icon.create_line(15, 34, 22, 34, 27, 20, 32, 38, 37, 27, 42, 27, fill=C["fg_soft"], width=2.5,
+                         capstyle=tk.ROUND, joinstyle=tk.ROUND)
+        icon.pack(pady=(0, 12))
+        ttk.Label(empty, text="Aucun fichier ouvert", style="Title.Card.TLabel").pack()
+        ttk.Label(empty, text="Ouvrez un export Graphtec, nanodac… (CSV, TXT, DAT).\n"
+                              "Le format est détecté automatiquement.",
+                  style="Muted.Card.TLabel", justify=tk.CENTER).pack(pady=(4, 16))
+        buttons = ttk.Frame(empty, style="Card.TFrame")
+        buttons.pack()
+        ttk.Button(buttons, text="Ouvrir des fichiers…", style="Primary.TButton",
+                   command=self.open_files).pack(side=tk.LEFT, padx=(0, 6))
+        if all((EXAMPLES_DIR / f).is_file() for f in EXAMPLE_FILES):
+            ttk.Button(buttons, text="Essayer avec les exemples",
+                       command=lambda: self.open_files([str(EXAMPLES_DIR / f) for f in EXAMPLE_FILES])
+                       ).pack(side=tk.LEFT)
+
         # Indicateur de chargement, affiché par-dessus le graphique
-        self.busy_panel = ttk.Frame(frame, padding=(28, 18), relief=tk.RIDGE, borderwidth=2)
+        self.busy_panel, busy = card(frame, padding=22)
         self.busy_text = tk.StringVar()
-        ttk.Label(self.busy_panel, text="Traitement en cours…", font=("TkDefaultFont", 11, "bold")).pack()
-        ttk.Label(self.busy_panel, textvariable=self.busy_text, wraplength=420, justify=tk.CENTER).pack(pady=(6, 10))
-        self.busy_bar = ttk.Progressbar(self.busy_panel, mode="indeterminate", length=320)
-        self.busy_bar.pack()
-        return frame
+        ttk.Label(busy, text="Traitement en cours…", style="Title.Card.TLabel").pack(anchor=tk.W)
+        ttk.Label(busy, textvariable=self.busy_text, style="Muted.Card.TLabel", wraplength=380,
+                  justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 14))
+        self.busy_bar = ttk.Progressbar(busy, mode="indeterminate", length=380)
+        self.busy_bar.pack(fill=tk.X)
+        return outer
 
     def _build_statusbar(self) -> None:
         self.status = tk.StringVar()
-        bar = ttk.Frame(self.root, padding=(8, 2))
+        bar = ttk.Frame(self.root, padding=(16, 5))
         bar.pack(fill=tk.X, side=tk.BOTTOM)
-        ttk.Label(bar, textvariable=self.status).pack(side=tk.LEFT)
-        ttk.Label(bar, text="v" + __version__, foreground="#999").pack(side=tk.RIGHT)
+        separator(self.root).pack(side=tk.BOTTOM, fill=tk.X)
+        ttk.Label(bar, textvariable=self.status, style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Label(bar, text="CleanTrace v" + __version__, style="Muted.TLabel").pack(side=tk.RIGHT)
 
     # ==================================================================== actions
 
@@ -385,6 +446,7 @@ class CleanTraceApp:
         if busy:
             self.busy_text.set(message)
             self._set_status(message)
+            self.empty_panel.place_forget()
             self.busy_panel.place(relx=0.5, rely=0.45, anchor=tk.CENTER)
             self.busy_panel.lift()
             self.busy_bar.start(12)
@@ -393,6 +455,14 @@ class CleanTraceApp:
             self.busy_bar.stop()
             self.busy_panel.place_forget()
             self.root.config(cursor="")
+            self._update_empty_state()
+
+    def _update_empty_state(self) -> None:
+        if self.session.measurements or self.busy:
+            self.empty_panel.place_forget()
+        else:
+            self.empty_panel.place(relx=0.5, rely=0.45, anchor=tk.CENTER)
+            self.empty_panel.lift()
 
     # ================================================================== affichage
 
@@ -406,6 +476,9 @@ class CleanTraceApp:
         self.plot.time_offset_min = self.session.time_offset_min
         self.plot.percent_axis = self.session.percent_axis
         self.plot.draw(series)
+        self._key_color = {self._gid_key[gid]: color for gid, color in self.plot.colors.items()}
+        self._refresh_checkmarks()
+        self._update_empty_state()
 
     def _rebuild_tree(self) -> None:
         self.tree.delete(*self.tree.get_children())
@@ -413,18 +486,18 @@ class CleanTraceApp:
         self._file_item.clear()
         ref = self.session.reference
         for m in self.session.measurements.values():
-            info = "{} · {}".format(m.source, m.period_label)
-            file_id = self.tree.insert("", tk.END, text=m.name, values=(info,), open=True)
+            file_id = self.tree.insert("", tk.END, text=" " + m.name, open=True, tags=("file",))
             self._file_item[m.name] = file_id
             for ch in m.channels:
-                item = self.tree.insert(file_id, tk.END, text=ch.label, values=(ch.quantity,))
+                item = self.tree.insert(file_id, tk.END, text=" " + ch.label)
                 self._item_key[item] = (m.name, ch.label)
         self._refresh_checkmarks()
-        if ref is not None:
-            self.lbl_reference.config(
-                text="Référence temps : {} ({}, {})".format(ref.name, ref.source, ref.period_label))
-        else:
-            self.lbl_reference.config(text="")
+        lines = ["{}{} · {} · {}".format("★ " if m is ref and len(self.session.measurements) > 1 else "",
+                                          m.name, m.source, m.period_label)
+                 for m in self.session.measurements.values()]
+        if len(lines) > 1:
+            lines.append("★ référence de temps")
+        self.lbl_reference.config(text="\n".join(lines))
         self._update_window_label()
 
     def _update_window_label(self) -> None:
@@ -455,7 +528,7 @@ class CleanTraceApp:
         mode = next(k for k, v in TIME_MODES.items() if v == label)
         self.session.set_time_mode(mode)
         # Le décalage de l'enceinte (en minutes) n'a pas de sens sur un axe en %
-        self.offset_scale.config(state=tk.DISABLED if self.session.percent_axis else tk.NORMAL)
+        self.offset_scale.state(["disabled"] if self.session.percent_axis else ["!disabled"])
         self._update_window_label()
         self.redraw()
         self._set_status("Base de temps : {}.".format(label))
@@ -466,13 +539,15 @@ class CleanTraceApp:
         self._set_status("Grille d'export : {}.".format(label))
 
     def _refresh_checkmarks(self) -> None:
+        """Case cochée / décochée + pastille de la couleur de la courbe (= légende)."""
         for item, key in self._item_key.items():
-            mark = CHECKED if self._checked.get(key) else UNCHECKED
-            self.tree.item(item, text="{}  {}".format(mark, key[1]))
+            on = bool(self._checked.get(key))
+            image = self.check_images.get("on" if on else "off", self._key_color.get(key) if on else None)
+            self.tree.item(item, image=image, tags=() if on else ("off",))
         for name, file_id in self._file_item.items():
             states = [self._checked.get(self._item_key[c]) for c in self.tree.get_children(file_id)]
-            mark = CHECKED if all(states) else UNCHECKED if not any(states) else PARTIAL
-            self.tree.item(file_id, text="{}  {}".format(mark, name))
+            state = "on" if all(states) else "off" if not any(states) else "partial"
+            self.tree.item(file_id, image=self.check_images.get(state), tags=("file",))
 
     def _on_tree_click(self, event):
         if self.busy:
@@ -493,8 +568,11 @@ class CleanTraceApp:
         return "break"
 
     def _on_offset(self, _value=None) -> None:
-        self.session.time_offset_min = float(self.offset_var.get())
-        self.plot.set_time_offset(self.session.time_offset_min)
+        value = round(float(self.offset_var.get()) * 2) / 2  # pas de 0,5 min
+        self.offset_var.set(value)
+        self.lbl_offset.config(text="{:+.1f} min".format(value).replace(".", ",") if value else "0,0 min")
+        self.session.time_offset_min = value
+        self.plot.set_time_offset(value)
 
     def _set_offset(self, value: float) -> None:
         self.offset_var.set(value)
@@ -521,6 +599,18 @@ class CleanTraceApp:
         details = "".join(traceback.format_exception(exc_type, exc, tb))
         print(details)
         messagebox.showerror("Erreur inattendue", "{}\n\n(détails dans la console)".format(exc), parent=self.root)
+
+
+def _flatten_toolbar(toolbar) -> None:
+    """Barre de zoom Matplotlib aux couleurs du thème (fond blanc, sans relief)."""
+    for widget in [toolbar] + list(toolbar.winfo_children()):
+        for option, value in (("background", C["card"]), ("highlightthickness", 0),
+                              ("activebackground", C["muted"]), ("relief", tk.FLAT), ("bd", 0),
+                              ("foreground", C["muted_fg"])):
+            try:
+                widget.configure(**{option: value})
+            except tk.TclError:
+                pass
 
 
 def _enable_windows_dpi_awareness() -> None:

@@ -41,6 +41,8 @@ python main.py
    montre, voie par voie, le seuil de bruit (réglable, avec une suggestion calculée sur les
    données) et le nombre de points modifiés **avant** d'appliquer. Bouton **?** / **Aide** :
    explications détaillées.
+
+   ![Fenêtre de nettoyage](docs/captures/4-fenetre-nettoyage.png)
 4. **Clic gauche** sur un point abîmé pour le corriger (interpolation avec ses voisins).
 5. Curseur **Décalage enceinte climatique** : recale les courbes du nanodac si l'enceinte est en retard.
 6. **Exporter en CSV…** : fichier `;` prêt pour Excel.

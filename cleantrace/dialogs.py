@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 from .cleaning import CleaningOptions
 from .export import Key
 from .help import HelpWindow
+from .theme import C, card
 
 
 def _fmt(value: Optional[float]) -> str:
@@ -36,40 +37,50 @@ class CleaningDialog(tk.Toplevel):
         self.title("Nettoyage de {} voie(s)".format(len(keys)))
         self.transient(app.root)
         self.resizable(True, True)
+        self.configure(background=C["background"])
 
-        body = ttk.Frame(self, padding=10)
+        body = ttk.Frame(self, padding=16)
         body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text="Nettoyage", font=app.fonts.brand).pack(anchor=tk.W)
+        ttk.Label(body, text="Réglez les traitements, vérifiez l'aperçu, puis appliquez.",
+                  style="Muted.TLabel").pack(anchor=tk.W, pady=(0, 12))
 
         # --- traitements et réglages communs
-        top = ttk.Frame(body)
+        outer, box = card(body, "Traitements")
+        outer.pack(fill=tk.X)
+        top = ttk.Frame(box, style="Card.TFrame")  # grille (card() place son titre avec pack)
         top.pack(fill=tk.X)
-        ttk.Checkbutton(top, text="Supprimer les pics de saturation", variable=app.chk_peaks).grid(
-            row=0, column=0, sticky=tk.W)
-        ttk.Label(top, text="au-delà de").grid(row=0, column=1, padx=(12, 2))
+        ttk.Checkbutton(top, text="Supprimer les pics de saturation", variable=app.chk_peaks,
+                        style="Card.TCheckbutton").grid(row=0, column=0, sticky=tk.W)
+        ttk.Label(top, text="au-delà de", style="Card.TLabel").grid(row=0, column=1, padx=(12, 4))
         self.saturation = tk.StringVar(value="98")
         ttk.Spinbox(top, from_=50, to=100, increment=1, width=5, textvariable=self.saturation).grid(row=0, column=2)
-        ttk.Label(top, text="% du max, groupes de").grid(row=0, column=3, padx=2)
+        ttk.Label(top, text="% du max, groupes de", style="Card.TLabel").grid(row=0, column=3, padx=4)
         self.width = tk.StringVar(value="5")
         ttk.Spinbox(top, from_=1, to=50, increment=1, width=4, textvariable=self.width).grid(row=0, column=4)
-        ttk.Label(top, text="points max").grid(row=0, column=5, padx=2)
+        ttk.Label(top, text="points max", style="Card.TLabel").grid(row=0, column=5, padx=4)
         ttk.Checkbutton(top, text="Forcer à 0 le bruit de repos (seuil par voie ci-dessous)",
-                        variable=app.chk_noise).grid(row=1, column=0, columnspan=6, sticky=tk.W, pady=(4, 0))
+                        variable=app.chk_noise, style="Card.TCheckbutton").grid(
+            row=1, column=0, columnspan=6, sticky=tk.W, pady=(6, 0))
 
         # --- tableau des voies
-        table_box = ttk.LabelFrame(body, text="Voies", padding=6)
-        table_box.pack(fill=tk.BOTH, expand=True, pady=(8, 0))
-        canvas = tk.Canvas(table_box, highlightthickness=0, height=min(36 + 28 * len(keys), 420))
+        outer, table_box = card(body, "Voies cochées",
+                                "Seuil vide = pas de mise à 0. En rouge : plus de 90 % de la voie serait mise à 0.")
+        outer.pack(fill=tk.BOTH, expand=True, pady=(12, 0))
+        canvas = tk.Canvas(table_box, highlightthickness=0, height=min(36 + 30 * len(keys), 420),
+                           background=C["card"])
         scroll = ttk.Scrollbar(table_box, orient=tk.VERTICAL, command=canvas.yview)
-        table = ttk.Frame(canvas)
+        table = ttk.Frame(canvas, style="Card.TFrame")
         table.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=table, anchor=tk.NW)
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        headers = ["Voie", "Min … max", "Seuil bruit", "Suggestion", "Pics", "Mis à 0"]
+        headers = ["VOIE", "MIN … MAX", "SEUIL BRUIT", "SUGGESTION", "PICS", "MIS À 0"]
         for col, text in enumerate(headers):
-            ttk.Label(table, text=text, font=("TkDefaultFont", 9, "bold")).grid(row=0, column=col, sticky=tk.W, padx=6)
+            ttk.Label(table, text=text, style="Muted.Card.TLabel").grid(
+                row=0, column=col, sticky=tk.E if col >= 4 else tk.W, padx=6, pady=(0, 6))
 
         self.threshold_vars: Dict[Key, tk.StringVar] = {}
         self.suggestions: Dict[Key, Optional[float]] = {}
@@ -79,14 +90,14 @@ class CleaningDialog(tk.Toplevel):
             ch = m.channel(key[1])
             y = m.data[key[1]]
             name = key[1] if len({k[0] for k in keys}) == 1 else "{} — {}".format(key[1], key[0])
-            ttk.Label(table, text=name).grid(row=row, column=0, sticky=tk.W, padx=6, pady=1)
-            ttk.Label(table, text="{:.4g} … {:.4g}".format(y.min(), y.max()), foreground="#555").grid(
+            ttk.Label(table, text=name, style="Card.TLabel").grid(row=row, column=0, sticky=tk.W, padx=6, pady=2)
+            ttk.Label(table, text="{:.4g} … {:.4g}".format(y.min(), y.max()), style="Muted.Card.TLabel").grid(
                 row=row, column=1, sticky=tk.W, padx=6)
-            cell = ttk.Frame(table)
+            cell = ttk.Frame(table, style="Card.TFrame")
             cell.grid(row=row, column=2, sticky=tk.W, padx=6)
             var = tk.StringVar(value=_fmt(self.session.noise_threshold(key)))
             ttk.Entry(cell, textvariable=var, width=9).pack(side=tk.LEFT)
-            ttk.Label(cell, text=ch.unit).pack(side=tk.LEFT, padx=(3, 0))
+            ttk.Label(cell, text=ch.unit, style="Muted.Card.TLabel").pack(side=tk.LEFT, padx=(4, 0))
             self.threshold_vars[key] = var
             suggestion = self.session.suggest_noise_threshold(key)
             self.suggestions[key] = suggestion
@@ -96,28 +107,28 @@ class CleaningDialog(tk.Toplevel):
                 hint = "non calculable"
             else:
                 hint = "pas de repos à 0"
-            ttk.Label(table, text=hint, foreground="#2a6" if suggestion else "#999").grid(
-                row=row, column=3, sticky=tk.W, padx=6)
-            peaks = ttk.Label(table, text="–", width=7, anchor=tk.E)
-            zeros = ttk.Label(table, text="–", width=14, anchor=tk.E)
+            ttk.Label(table, text=hint, style="Card.TLabel",
+                      foreground=C["success"] if suggestion else C["ring"]).grid(row=row, column=3, sticky=tk.W, padx=6)
+            peaks = ttk.Label(table, text="–", width=7, anchor=tk.E, style="Card.TLabel")
+            zeros = ttk.Label(table, text="–", width=14, anchor=tk.E, style="Card.TLabel")
             peaks.grid(row=row, column=4, sticky=tk.E, padx=6)
             zeros.grid(row=row, column=5, sticky=tk.E, padx=6)
             self.result_labels[key] = (peaks, zeros)
 
-        ttk.Label(body, wraplength=640, foreground="#555", justify=tk.LEFT, text=(
-            "Seuil vide = pas de mise à 0 pour cette voie. « Pas de repos à 0 » : la voie ne revient "
-            "jamais à 0 (petit courant permanent…) ; elle n'est pas mise à 0 par défaut, cela "
-            "effacerait de vraies mesures. En rouge : plus de 90 % de la voie serait mise à 0."
-        )).pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(body, wraplength=680, style="Muted.TLabel", justify=tk.LEFT, text=(
+            "« Pas de repos à 0 » : la voie ne revient jamais à 0 (petit courant permanent…) ; elle "
+            "n'est pas mise à 0 par défaut, cela effacerait de vraies mesures."
+        )).pack(fill=tk.X, pady=(8, 0))
 
         # --- boutons
         buttons = ttk.Frame(body)
-        buttons.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(buttons, text="?", width=3, command=lambda: HelpWindow.open(self, "Nettoyage")).pack(side=tk.LEFT)
+        buttons.pack(fill=tk.X, pady=(14, 0))
+        ttk.Button(buttons, text="?", style="Icon.TButton", width=2,
+                   command=lambda: HelpWindow.open(self, "Nettoyage")).pack(side=tk.LEFT)
         ttk.Button(buttons, text="Utiliser les suggestions", command=self.use_suggestions).pack(side=tk.LEFT, padx=6)
         ttk.Button(buttons, text="Aperçu", command=self.preview).pack(side=tk.LEFT)
-        ttk.Button(buttons, text="Annuler", command=self.destroy).pack(side=tk.RIGHT)
-        ttk.Button(buttons, text="Appliquer", command=self.apply).pack(side=tk.RIGHT, padx=6)
+        ttk.Button(buttons, text="Appliquer", style="Primary.TButton", command=self.apply).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="Annuler", command=self.destroy).pack(side=tk.RIGHT, padx=6)
         self.preview()
         # Le tableau défile verticalement : la fenêtre doit être assez large pour toutes ses colonnes
         self.update_idletasks()
@@ -166,7 +177,7 @@ class CleaningDialog(tk.Toplevel):
             share = report.noise_points / n if n else 0
             zeros.config(
                 text="{} ({:.0%})".format(report.noise_points, share) if options.remove_noise else "–",
-                foreground="#c0392b" if share > 0.9 else "",  # voie presque entièrement effacée
+                foreground=C["destructive"] if share > 0.9 else C["fg"],  # voie presque entièrement effacée
             )
 
     def apply(self) -> None:

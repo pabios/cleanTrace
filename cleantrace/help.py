@@ -4,6 +4,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from .theme import C
+
 SECTIONS = [
     ("Démarrer", """\
 1. « Ouvrir des fichiers… » : choisissez un ou plusieurs exports (Graphtec, nanodac…).
@@ -49,7 +51,7 @@ Bruit de repos (forcer à 0)
   entre 80 et 160 mA).
 
 Annuler
-  « Restaurer les données brutes » annule nettoyages ET corrections au clic des voies
+  « Annuler le nettoyage » remet les données brutes : annule nettoyages ET corrections au clic des voies
   cochées."""),
 
     ("Correction au clic", """\
@@ -93,22 +95,29 @@ class HelpWindow(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Aide — CleanTrace")
-        self.geometry("720x620")
-        frame = ttk.Frame(self, padding=8)
+        self.geometry("760x660")
+        self.configure(background=C["background"])
+        outer = tk.Frame(self, background=C["card"], highlightbackground=C["border"], highlightthickness=1)
+        outer.pack(fill=tk.BOTH, expand=True, padx=16, pady=(16, 8))
+        frame = ttk.Frame(outer, style="Card.TFrame", padding=4)
         frame.pack(fill=tk.BOTH, expand=True)
-        self.text = tk.Text(frame, wrap=tk.WORD, padx=10, pady=8, font=("TkDefaultFont", 10))
+        self.text = tk.Text(frame, wrap=tk.WORD, padx=18, pady=12, font=("TkDefaultFont", 10), relief=tk.FLAT,
+                            background=C["card"], foreground=C["fg_soft"], highlightthickness=0, bd=0,
+                            spacing1=1, spacing3=1)
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=self.text.yview)
         self.text.configure(yscrollcommand=scroll.set)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.text.tag_configure("title", font=("TkDefaultFont", 12, "bold"), spacing1=10, spacing3=4)
+        self.text.tag_configure("title", font=("TkDefaultFont", 13, "bold"), foreground=C["fg"],
+                                spacing1=14, spacing3=6)
         for title, body in SECTIONS:
             self.text.mark_set("section-" + title, self.text.index("end-1c"))
             self.text.mark_gravity("section-" + title, tk.LEFT)
             self.text.insert(tk.END, title + "\n", "title")
             self.text.insert(tk.END, body + "\n\n")
         self.text.configure(state=tk.DISABLED)
-        ttk.Button(self, text="Fermer", command=self.destroy).pack(pady=(0, 8))
+        ttk.Button(self, text="Fermer", style="Primary.TButton", command=self.destroy).pack(
+            anchor=tk.E, padx=16, pady=(0, 16))
 
     def show(self, section: str) -> None:
         self.deiconify()

@@ -87,13 +87,15 @@ def _cmap(name: str):
 
 
 def _colors(n: int):
-    if n <= 10:
-        cmap, values = _cmap("tab10"), range(n)
-    elif n <= 20:
-        cmap, values = _cmap("tab20"), range(n)
-    else:
-        cmap, values = _cmap("turbo"), np.linspace(0.05, 0.95, n)
-    return [cmap(v) for v in values]
+    """Couleurs des courbes : palette du thème, puis dégradé au-delà."""
+    from matplotlib.colors import to_hex
+
+    from .theme import SERIES_COLORS
+
+    if n <= len(SERIES_COLORS):
+        return SERIES_COLORS[:n]
+    cmap = _cmap("turbo")
+    return [to_hex(cmap(v)) for v in np.linspace(0.05, 0.95, n)]
 
 
 # Au-delà de ce nombre de points visibles, une courbe est réduite pour l'affichage
@@ -141,22 +143,19 @@ class PlotManager:
         self.percent_axis = False  # axe du temps en % de la durée (mode « étiré »)
         self._traces: Dict[str, _Trace] = {}
         self._main_ax = None
+        self.colors: Dict[str, str] = {}  # gid -> couleur de la courbe
         self.draw([])
 
     def draw(self, series: Sequence[PlotSeries], title: str = "") -> None:
         fig = self.figure
         fig.clear()
         self._traces = {}
+        self.colors = {}
         ax = fig.add_subplot(111)
         self._main_ax = ax
 
         if not series:
-            ax.set_axis_off()
-            ax.text(
-                0.5, 0.5,
-                "Ouvrez un ou plusieurs fichiers de mesure\n(bouton « Ouvrir des fichiers… »)",
-                ha="center", va="center", fontsize=12, color="0.45", transform=ax.transAxes,
-            )
+            ax.set_axis_off()  # l'application affiche son propre écran d'accueil
             fig.canvas.draw_idle()
             return
 
@@ -171,7 +170,8 @@ class PlotManager:
         handles = []
         for s, color in zip(series, _colors(len(series))):
             target = axes.get(s.quantity, ax)
-            (line,) = target.plot([], [], color=color, linewidth=1.0, label=s.label, gid=s.gid)
+            (line,) = target.plot([], [], color=color, linewidth=1.2, label=s.label, gid=s.gid)
+            self.colors[s.gid] = color
             trace = _Trace(line, s.x, s.y, s.shiftable, s.index_base)
             self._traces[s.gid] = trace
             self._refresh(trace, None)
@@ -185,12 +185,29 @@ class PlotManager:
             ax.set_ylabel("Signaux électriques" + (" ({})".format(", ".join(main_units)) if main_units else ""))
         else:
             ax.set_yticks([])
+        from .theme import C, HUMIDITY_COLOR, TEMPERATURE_COLOR
+
         if TEMPERATURE in axes:
-            axes[TEMPERATURE].set_ylabel("Température (°C)", color="#b2182b")
-            axes[TEMPERATURE].tick_params(axis="y", colors="#b2182b")
+            axes[TEMPERATURE].set_ylabel("Température (°C)", color=TEMPERATURE_COLOR)
+            axes[TEMPERATURE].tick_params(axis="y", colors=TEMPERATURE_COLOR)
         if HUMIDITY in axes:
-            axes[HUMIDITY].set_ylabel("Humidité (%HR)", color="#2166ac")
-            axes[HUMIDITY].tick_params(axis="y", colors="#2166ac")
+            axes[HUMIDITY].set_ylabel("Humidité (%HR)", color=HUMIDITY_COLOR)
+            axes[HUMIDITY].tick_params(axis="y", colors=HUMIDITY_COLOR)
+        # Style épuré : fond blanc, bordures fines, grille discrète, textes atténués
+        for a in axes.values():
+            a.set_facecolor(C["card"])
+            for side in ("top", "left", "bottom", "right"):
+                a.spines[side].set_color(C["border_strong"])
+                a.spines[side].set_linewidth(0.8)
+            a.spines["top"].set_visible(False)
+            a.tick_params(length=3, width=0.8, labelsize=9, color=C["border_strong"])
+        ax.spines["right"].set_visible(False)
+        ax.tick_params(axis="both", labelcolor=C["muted_fg"])
+        ax.yaxis.label.set_color(C["fg_soft"])
+        ax.xaxis.label.set_color(C["fg_soft"])
+        for twin in list(axes.values())[1:]:
+            twin.spines["left"].set_visible(False)
+            twin.spines["bottom"].set_visible(False)
 
         if self.percent_axis:
             ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _pos=None: "{:g} %".format(round(v, 1))))
@@ -200,7 +217,8 @@ class PlotManager:
             ax.xaxis.set_major_formatter(FuncFormatter(format_axis_time))
             ax.xaxis.set_major_locator(TimeLocator())
             ax.set_xlabel("Temps (H:MM:SS)")
-        ax.grid(True, alpha=0.3)
+        ax.grid(True, color=C["muted"], linewidth=1.0)
+        ax.set_axisbelow(True)
         ax.format_coord = self._format_coord
         if title:
             ax.set_title(title, fontsize=10, loc="left", color="0.35")
@@ -268,7 +286,7 @@ class PlotManager:
             # Légende sur l'axe du dessus pour qu'elle ne soit pas masquée par les courbes.
             # "best" teste chaque point : trop lent quand il y a beaucoup de courbes.
             loc = "best" if len(handles) <= 4 else "upper right"
-            leg = top_ax.legend(handles, labels, loc=loc, fontsize="small", framealpha=0.85)
+            leg = top_ax.legend(handles, labels, loc=loc, fontsize="small", framealpha=0.95)
         else:
             ncol = math.ceil(len(handles) / LEGEND_MAX_ROWS)
             anchor_x = 1.02 + 0.09 * n_twins + (0.06 if n_twins else 0)
@@ -276,4 +294,12 @@ class PlotManager:
                 handles, labels, loc="upper left", bbox_to_anchor=(anchor_x, 1.0),
                 ncol=ncol, fontsize="x-small", framealpha=0.85, borderaxespad=0.0,
             )
+        from .theme import C
+
+        frame = leg.get_frame()
+        frame.set_edgecolor(C["border"])
+        frame.set_linewidth(0.8)
+        frame.set_boxstyle("round,pad=0.4,rounding_size=0.6")
+        for text in leg.get_texts():
+            text.set_color(C["fg_soft"])
         leg.set_draggable(True)
