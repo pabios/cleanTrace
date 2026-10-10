@@ -40,6 +40,7 @@ NOISE_THRESHOLDS = {
 
 @dataclass
 class CleaningOptions:
+    zero_offset: bool = True  # soustraire le décalage de zéro mesuré au repos
     remove_noise: bool = True  # chk_noise
     remove_peaks: bool = True  # chk_peaks
     peak_mode: str = "all"  # "all" : tous les pics étroits ; "saturation" : seulement > saturation_ratio × max
@@ -55,6 +56,7 @@ class CleaningOptions:
 class CleaningReport:
     noise_points: int = 0
     peak_points: int = 0
+    offset: float = 0.0  # décalage de zéro soustrait
 
     @property
     def total(self) -> int:
@@ -108,17 +110,52 @@ def suggest_noise_threshold(y, min_rest_fraction: float = 0.02) -> Optional[floa
     return float("{:.2g}".format(value))
 
 
+def estimate_rest_offset(y) -> Optional[float]:
+    """Décalage de zéro du capteur : niveau des phases de repos quand il n'est pas exactement 0.
+
+    Le repos est la valeur la plus fréquente de la voie (longues phases d'arrêt). Elle
+    n'est considérée comme un décalage que si elle est proche de 0 à l'échelle de la voie
+    (moins de 20 % de l'amplitude) et nettement plus grande que le bruit. Une tension
+    d'alimentation (24 V permanents) ou un petit courant permanent n'ont donc pas de décalage.
+    Renvoie None s'il n'y a rien à corriger.
+    """
+    y = np.asarray(y, dtype=float)
+    y = y[np.isfinite(y)]
+    if len(y) < 100:
+        return None
+    lo, hi = np.percentile(y, [0.5, 99.5])
+    if hi <= lo:
+        return None
+    counts, edges = np.histogram(y[(y >= lo) & (y <= hi)], bins=400)
+    k = int(np.argmax(counts))
+    mode = 0.5 * (edges[k] + edges[k + 1])
+    sigma = max(_noise_sigma(y), (edges[1] - edges[0]))
+    near = np.abs(y - mode) < 4 * sigma
+    if near.mean() < 0.2:
+        return None  # pas de longues phases de repos
+    rest = float(np.median(y[near]))
+    amplitude = float(max(abs(lo), abs(hi)))
+    if abs(rest) >= 0.2 * amplitude or abs(rest) < 3 * sigma:
+        return None
+    return float("{:.3g}".format(rest))
+
+
 def clean_signal(
-    y, unit: str = "", options: Optional[CleaningOptions] = None, noise_threshold=_DEFAULT
+    y, unit: str = "", options: Optional[CleaningOptions] = None, noise_threshold=_DEFAULT,
+    offset: Optional[float] = None,
 ) -> Tuple[np.ndarray, CleaningReport]:
     """Applique les traitements activés à un signal. Renvoie (signal nettoyé, rapport).
 
+    Ordre : décalage de zéro (``offset`` soustrait), pics parasites, bruit de repos.
     ``noise_threshold`` : seuil de bruit de repos de cette voie (dans son unité). Par
     défaut, celui de l'unité (``NOISE_THRESHOLDS``) ; None : pas de mise à 0.
     """
     options = options or CleaningOptions()
     out = np.asarray(y, dtype=float).copy()
     report = CleaningReport()
+    if options.zero_offset and offset:
+        out -= offset
+        report.offset = float(offset)
     # Les pics d'abord : un pic de saturation ne doit pas fausser la détection du repos.
     if options.remove_peaks:
         out, report.peak_points = remove_saturation_peaks(

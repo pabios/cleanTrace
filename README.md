@@ -37,15 +37,21 @@ python main.py
 
 1. **Ouvrir des fichiers…** (essayer ceux du dossier `exemples/`).
 2. Cocher les voies à afficher.
-3. **Nettoyer…** : supprime les pics parasites (quelle que soit leur hauteur) et met à 0 le bruit de repos. Une fenêtre
-   montre, voie par voie, le seuil de bruit (réglable, avec une suggestion calculée sur les
-   données) et le nombre de points modifiés **avant** d'appliquer. Bouton **?** / **Aide** :
-   explications détaillées.
+3. **Nettoyer…** : corrige le décalage de zéro au repos, supprime les pics parasites (quelle
+   que soit leur hauteur) et met à 0 le bruit de repos. La fenêtre montre, voie par voie, les
+   réglages (avec des suggestions calculées sur les données) et le nombre de points modifiés
+   **avant** d'appliquer. « Montrer les données brutes » affiche ensuite l'original en gris
+   pour vérifier. Bouton **?** / **Aide** : explications détaillées.
 
    ![Fenêtre de nettoyage](docs/captures/4-fenetre-nettoyage.png)
 4. **Clic gauche** sur un point abîmé pour le corriger (interpolation avec ses voisins).
 5. Curseur **Décalage enceinte climatique** : recale les courbes du nanodac si l'enceinte est en retard.
-6. **Exporter en CSV…** : fichier `;` prêt pour Excel.
+6. **Exporter ▾** :
+   - **Données nettoyées (CSV + journal)** : fichier `;` prêt pour Excel, avec un fichier
+     `…_journal.txt` qui trace tous les traitements appliqués ;
+   - **Image du graphique** (PNG, PDF, SVG) ;
+   - **Rapport PDF pour le client** : fichiers sources, statistiques par voie, graphique,
+     journal des traitements.
 
 ### Superposer plusieurs fichiers
 

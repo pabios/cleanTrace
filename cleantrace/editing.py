@@ -79,8 +79,9 @@ class ClickCorrector:
         best = None
         for ax in self.figure.axes:
             for line in ax.get_lines():
-                if line.get_gid() is None or not line.get_visible():
-                    continue
+                gid = line.get_gid()
+                if gid is None or str(gid).startswith("raw:") or not line.get_visible():
+                    continue  # courbes de comparaison (données brutes) : non corrigeables
                 line.set_pickradius(self.pickradius)
                 inside, info = line.contains(event)
                 if not inside or not len(info.get("ind", [])):

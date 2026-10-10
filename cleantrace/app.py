@@ -31,6 +31,8 @@ from .editing import ClickCorrector
 from .export import Key
 from .help import HelpWindow
 from .loader import write_extract
+from .report import build_report, save_figure_image
+from .session import journal_path
 from .plotting import PlotManager, format_hms
 from .session import EXPORT_STEPS, TIME_MODES, Session
 from .theme import C, CheckImages, ScrollFrame, apply_theme, bordered, card, separator
@@ -98,15 +100,26 @@ class CleanTraceApp:
         actions = ttk.Frame(inner, style="Card.TFrame")
         actions.pack(side=tk.RIGHT)
         ttk.Button(actions, text="Aide", style="Ghost.TButton",
-                   command=lambda: HelpWindow.open(self.root)).pack(side=tk.LEFT, padx=(0, 6))
-        for text, command, style in (
-            ("Réinitialiser", self.reset_all, "TButton"),
-            ("Exporter en CSV…", self.export_csv, "TButton"),
-            ("Ouvrir des fichiers…", self.open_files, "Primary.TButton"),
-        ):
-            button = ttk.Button(actions, text=text, command=command, style=style)
-            button.pack(side=tk.LEFT, padx=(0, 6))
-            self._action_buttons.append(button)
+                   command=lambda: HelpWindow.open(self.root)).pack(side=tk.LEFT, padx=(0, 2))
+        ttk.Button(actions, text="Journal", style="Ghost.TButton",
+                   command=self.show_journal).pack(side=tk.LEFT, padx=(0, 6))
+        button = ttk.Button(actions, text="Réinitialiser", command=self.reset_all)
+        button.pack(side=tk.LEFT, padx=(0, 6))
+        self._action_buttons.append(button)
+        self.export_button = ttk.Menubutton(actions, text="Exporter  ▾", style="TMenubutton")
+        menu = tk.Menu(self.export_button, tearoff=False, background=C["card"], foreground=C["fg"],
+                       activebackground=C["muted"], activeforeground=C["fg"], bd=1, relief=tk.SOLID,
+                       font=self.fonts.base)
+        menu.add_command(label="Données nettoyées (CSV + journal)…", command=self.export_csv)
+        menu.add_command(label="Image du graphique (PNG, PDF, SVG)…", command=self.export_image)
+        menu.add_separator()
+        menu.add_command(label="Rapport PDF pour le client…", command=self.export_report)
+        self.export_button.configure(menu=menu)
+        self.export_button.pack(side=tk.LEFT, padx=(0, 6))
+        self._action_buttons.append(self.export_button)
+        button = ttk.Button(actions, text="Ouvrir des fichiers…", command=self.open_files, style="Primary.TButton")
+        button.pack(side=tk.LEFT, padx=(0, 6))
+        self._action_buttons.append(button)
 
     def _build_sidebar(self, parent) -> ttk.Frame:
         scroll = self.sidebar = ScrollFrame(parent, width=410)
@@ -145,10 +158,17 @@ class CleanTraceApp:
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         self.chk_noise = tk.BooleanVar(value=True)
         self.chk_peaks = tk.BooleanVar(value=True)
+        self.chk_offset = tk.BooleanVar(value=True)
+        self.chk_show_raw = tk.BooleanVar(value=True)
+        ttk.Checkbutton(clean, text="Corriger le décalage de zéro au repos", variable=self.chk_offset,
+                        style="Card.TCheckbutton").pack(anchor=tk.W)
         ttk.Checkbutton(clean, text="Supprimer les pics parasites", variable=self.chk_peaks,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
         ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos", variable=self.chk_noise,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
+        ttk.Checkbutton(clean, text="Montrer les données brutes (en gris)",
+                        variable=self.chk_show_raw, style="Card.TCheckbutton",
+                        command=self.redraw).pack(anchor=tk.W, pady=(6, 0))
         row = ttk.Frame(clean, style="Card.TFrame")
         row.pack(fill=tk.X, pady=(10, 0))
         for text, command, style in (
@@ -346,7 +366,7 @@ class CleanTraceApp:
             return
         return CleaningDialog(self, keys)
 
-    def apply_cleaning(self, keys, options: CleaningOptions, thresholds=None) -> None:
+    def apply_cleaning(self, keys, options: CleaningOptions, thresholds=None, offsets=None) -> None:
         """Applique le nettoyage réglé dans la fenêtre « Nettoyer… » (en arrière-plan)."""
 
         def done(report):
@@ -355,11 +375,13 @@ class CleanTraceApp:
                 len(keys), _thousands(report.peak_points), _thousands(report.noise_points))
             if options.remove_noise and report.noise_points == 0:
                 message += " Aucun repos sous le seuil : voies qui ne reviennent pas à 0, ou seuil trop bas."
+            if self.chk_show_raw.get():
+                message += " Données brutes en gris pour comparer."
             self._set_status(message)
 
         self.run_in_background(
             "Nettoyage de {} voie(s)…".format(len(keys)),
-            lambda progress: self.session.apply_cleaning(keys, options, thresholds), done,
+            lambda progress: self.session.apply_cleaning(keys, options, thresholds, offsets, progress), done,
         )
 
     def restore_selected(self) -> None:
@@ -386,16 +408,66 @@ class CleanTraceApp:
         def done(df):
             messagebox.showinfo(
                 "Export terminé",
-                "{} lignes × {} voies exportées dans :\n{}".format(len(df), len(keys), path),
+                "{} lignes × {} voies exportées dans :\n{}\n\nJournal des traitements joint :\n{}".format(
+                    _thousands(len(df)), len(keys), path, journal_path(path)),
                 parent=self.root,
             )
             self._set_status("Export : {}".format(path))
 
         self.run_in_background(
             "Export de {} voie(s) vers {}…".format(len(keys), Path(path).name),
-            lambda progress: self.session.export_csv(path, keys), done,
+            lambda progress: self.session.export_csv(path, keys, progress), done,
             error_title="Export impossible",
         )
+
+    def export_image(self) -> None:
+        """Image du graphique tel qu'affiché (pour un rapport), A4 paysage."""
+        keys = self.selected_keys()
+        if not keys:
+            messagebox.showinfo("Image", "Cochez au moins une voie.", parent=self.root)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.root, title="Enregistrer l'image du graphique", defaultextension=".png",
+            initialfile="cleantrace_graphique.png",
+            filetypes=[("Image PNG", "*.png"), ("Document PDF", "*.pdf"), ("Image vectorielle SVG", "*.svg")],
+        )
+        if not path:
+            return
+        view = self.plot.current_view()
+        self.run_in_background(
+            "Création de l'image {}…".format(Path(path).name),
+            lambda progress: save_figure_image(self.session, keys, view, path),
+            lambda result: self._set_status("Image enregistrée : {}".format(path)),
+            error_title="Image impossible",
+        )
+
+    def export_report(self) -> None:
+        """Rapport PDF : synthèse, statistiques, graphique et journal des traitements."""
+        keys = self.selected_keys()
+        if not keys:
+            messagebox.showinfo("Rapport", "Cochez au moins une voie.", parent=self.root)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.root, title="Enregistrer le rapport PDF", defaultextension=".pdf",
+            initialfile="cleantrace_rapport.pdf", filetypes=[("Document PDF", "*.pdf")],
+        )
+        if not path:
+            return
+        view = self.plot.current_view()
+
+        def done(result):
+            self._set_status("Rapport enregistré : {}".format(path))
+            messagebox.showinfo("Rapport enregistré", "Rapport PDF enregistré :\n{}".format(path), parent=self.root)
+
+        self.run_in_background(
+            "Création du rapport {}…".format(Path(path).name),
+            lambda progress: build_report(self.session, keys, view, path, progress=progress), done,
+            error_title="Rapport impossible",
+        )
+
+    def show_journal(self) -> None:
+        """Journal des traitements (traçabilité) dans une fenêtre."""
+        JournalWindow.open(self.root, self.session.journal_text())
 
     # ======================================================= traitements longs
 
@@ -412,7 +484,7 @@ class CleanTraceApp:
 
         def target():
             try:
-                result = work(lambda text: messages.put(("progress", text)))
+                result = work(lambda text, fraction=None: messages.put(("progress", text, fraction)))
                 messages.put(("done", result))
             except Exception as exc:  # remonté à l'utilisateur dans la boucle Tkinter
                 messages.put(("error", exc, traceback.format_exc()))
@@ -427,13 +499,13 @@ class CleanTraceApp:
                 if item[0] == "progress":
                     self.busy_text.set(item[1])
                     self._set_status(item[1])
+                    self._set_fraction(item[2])
                     continue
                 self._set_busy(False)
                 if item[0] == "done":
                     on_done(item[1])
                 else:
-                    print(item[2])
-                    messagebox.showerror(error_title, str(item[1]), parent=self.root)
+                    self._report_error(error_title, item[1], item[2])
                 return
         except queue.Empty:
             self.root.after(100, self._poll_background, messages, on_done, error_title)
@@ -449,13 +521,53 @@ class CleanTraceApp:
             self.empty_panel.place_forget()
             self.busy_panel.place(relx=0.5, rely=0.45, anchor=tk.CENTER)
             self.busy_panel.lift()
-            self.busy_bar.start(12)
+            self._set_fraction(None)
             self.root.config(cursor="watch")
         else:
             self.busy_bar.stop()
             self.busy_panel.place_forget()
             self.root.config(cursor="")
             self._update_empty_state()
+
+    def _set_fraction(self, fraction) -> None:
+        """Barre de progression : chiffrée si l'avancement est connu, animée sinon."""
+        if fraction is None:
+            if str(self.busy_bar.cget("mode")) != "indeterminate":
+                self.busy_bar.configure(mode="indeterminate", value=0)
+            self.busy_bar.start(12)
+        else:
+            self.busy_bar.stop()
+            self.busy_bar.configure(mode="determinate", maximum=100, value=max(2, 100 * float(fraction)))
+
+    def _working(self, message: str):
+        """Affiche l'indicateur pendant une opération courte faite dans la fenêtre (tracé)."""
+        app = self
+
+        class _Ctx:
+            def __enter__(self):
+                app.busy_text.set(message)
+                app._set_status(message)
+                app.empty_panel.place_forget()
+                app.busy_panel.place(relx=0.5, rely=0.45, anchor=tk.CENTER)
+                app.busy_panel.lift()
+                app._set_fraction(None)
+                app.root.config(cursor="watch")
+                app.root.update_idletasks()
+
+            def __exit__(self, *exc):
+                app.busy_bar.stop()
+                app.busy_panel.place_forget()
+                app.root.config(cursor="")
+                return False
+
+        return _Ctx()
+
+    def _report_error(self, title: str, exc, details: str) -> None:
+        """Message clair + détails techniques enregistrés dans un fichier à envoyer."""
+        log = log_error(details)
+        messagebox.showerror(
+            title, "{}\n\nLes détails techniques ont été enregistrés dans :\n{}\n"
+                   "Envoyez ce fichier au développeur.".format(exc, log), parent=self.root)
 
     def _update_empty_state(self) -> None:
         if self.session.measurements or self.busy:
@@ -471,8 +583,16 @@ class CleanTraceApp:
 
     def redraw(self) -> None:
         keys = self.selected_keys()
-        series = self.session.series(keys)
-        self._gid_key = {s.gid: key for s, key in zip(series, keys)}
+        big = sum(len(self.session.measurements[k[0]].data) for k in keys) > 300_000
+        if big and not self.busy:
+            with self._working("Affichage de {} voie(s)…".format(len(keys))):
+                self._redraw(keys)
+        else:
+            self._redraw(keys)
+
+    def _redraw(self, keys) -> None:
+        series = self.session.series(keys, with_raw=self.chk_show_raw.get())
+        self._gid_key = {s.gid: key for s, key in zip([s for s in series if not s.raw], keys)}
         self.plot.time_offset_min = self.session.time_offset_min
         self.plot.percent_axis = self.session.percent_axis
         self.plot.draw(series)
@@ -596,9 +716,57 @@ class CleanTraceApp:
         self.status.set(text)
 
     def _on_unexpected_error(self, exc_type, exc, tb) -> None:
-        details = "".join(traceback.format_exception(exc_type, exc, tb))
-        print(details)
-        messagebox.showerror("Erreur inattendue", "{}\n\n(détails dans la console)".format(exc), parent=self.root)
+        if self.busy:
+            self._set_busy(False)
+        self._report_error("Erreur inattendue", exc, "".join(traceback.format_exception(exc_type, exc, tb)))
+
+
+LOG_FILE = Path.home() / "cleantrace_erreurs.log"
+
+
+def log_error(details: str) -> Path:
+    """Ajoute une erreur (avec sa trace technique) au fichier journal des erreurs."""
+    import datetime
+
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as fh:
+            fh.write("=== {} — CleanTrace v{}\n{}\n".format(
+                datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S"), __version__, details))
+    except OSError:
+        pass
+    print(details)
+    return LOG_FILE
+
+
+class JournalWindow(tk.Toplevel):
+    """Fenêtre du journal des traitements."""
+
+    _instance = None
+
+    @classmethod
+    def open(cls, master, text: str):
+        if cls._instance is not None and cls._instance.winfo_exists():
+            cls._instance.destroy()
+        cls._instance = cls(master, text)
+        return cls._instance
+
+    def __init__(self, master, text: str):
+        super().__init__(master)
+        self.title("Journal des traitements — CleanTrace")
+        self.geometry("900x520")
+        self.configure(background=C["background"])
+        outer = bordered(self)
+        outer.pack(fill=tk.BOTH, expand=True, padx=16, pady=(16, 8))
+        box = tk.Text(outer, wrap=tk.WORD, font=("Consolas", 9), relief=tk.FLAT, bd=0, padx=14, pady=10,
+                      background=C["card"], foreground=C["fg_soft"], highlightthickness=0)
+        box.insert("1.0", text)
+        box.configure(state=tk.DISABLED)
+        box.pack(fill=tk.BOTH, expand=True)
+        row = ttk.Frame(self)
+        row.pack(fill=tk.X, padx=16, pady=(0, 16))
+        ttk.Label(row, text="Ce journal est joint à chaque export CSV et au rapport PDF.",
+                  style="Muted.TLabel").pack(side=tk.LEFT)
+        ttk.Button(row, text="Fermer", style="Primary.TButton", command=self.destroy).pack(side=tk.RIGHT)
 
 
 def _thousands(n: int) -> str:

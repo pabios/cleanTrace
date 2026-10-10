@@ -30,6 +30,7 @@ class PlotSeries:
     quantity: str
     shiftable: bool = False  # courbe climatique concernée par le décalage temporel
     index_base: int = 0  # indice, dans les données complètes, du premier point de x / y
+    raw: bool = False  # données brutes affichées en gris sous la voie nettoyée (comparaison)
 
 
 def format_hms(minutes: float, _pos=None) -> str:
@@ -159,6 +160,8 @@ class PlotManager:
             fig.canvas.draw_idle()
             return
 
+        from .theme import C
+
         axes = {"main": ax}
         if any(s.quantity == TEMPERATURE for s in series):
             axes[TEMPERATURE] = ax.twinx()
@@ -168,9 +171,19 @@ class PlotManager:
                 axes[HUMIDITY].spines["right"].set_position(("axes", 1.09))
 
         handles = []
-        for s, color in zip(series, _colors(len(series))):
+        main = [s for s in series if not s.raw]
+        palette = dict(zip((s.gid for s in main), _colors(len(main))))
+        for s in sorted(series, key=lambda s: not s.raw):  # le brut d'abord : dessous
             target = axes.get(s.quantity, ax)
-            (line,) = target.plot([], [], color=color, linewidth=1.2, label=s.label, gid=s.gid)
+            if s.raw:
+                (line,) = target.plot([], [], color=C["border_strong"], linewidth=0.9, label="_brut", gid=s.gid,
+                                      zorder=1)
+                trace = _Trace(line, s.x, s.y, s.shiftable, s.index_base)
+                self._traces[s.gid] = trace
+                self._refresh(trace, None)
+                continue
+            color = palette[s.gid]
+            (line,) = target.plot([], [], color=color, linewidth=1.2, label=s.label, gid=s.gid, zorder=2)
             self.colors[s.gid] = color
             trace = _Trace(line, s.x, s.y, s.shiftable, s.index_base)
             self._traces[s.gid] = trace
@@ -180,12 +193,12 @@ class PlotManager:
             a.relim()
             a.autoscale_view()
 
-        main_units = sorted({s.unit for s in series if s.quantity not in (TEMPERATURE, HUMIDITY) and s.unit})
-        if any(s.quantity not in (TEMPERATURE, HUMIDITY) for s in series):
+        main_units = sorted({s.unit for s in main if s.quantity not in (TEMPERATURE, HUMIDITY) and s.unit})
+        if any(s.quantity not in (TEMPERATURE, HUMIDITY) for s in main):
             ax.set_ylabel("Signaux électriques" + (" ({})".format(", ".join(main_units)) if main_units else ""))
         else:
             ax.set_yticks([])
-        from .theme import C, HUMIDITY_COLOR, TEMPERATURE_COLOR
+        from .theme import HUMIDITY_COLOR, TEMPERATURE_COLOR
 
         if TEMPERATURE in axes:
             axes[TEMPERATURE].set_ylabel("Température (°C)", color=TEMPERATURE_COLOR)
@@ -240,6 +253,10 @@ class PlotManager:
             if trace.shiftable:
                 self._refresh(trace, self._view())
         self.figure.canvas.draw_idle()
+
+    def current_view(self):
+        """Période affichée (zoom) en minutes, ou None si rien n'est tracé."""
+        return tuple(self._main_ax.get_xlim()) if self._traces and self._main_ax is not None else None
 
     def original_index(self, gid: str, plotted_index: int) -> int:
         """Indice dans les données complètes d'un point tracé."""

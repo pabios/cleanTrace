@@ -109,6 +109,13 @@ def apply_theme(root: tk.Tk) -> Fonts:
                 darkcolor=C["card"])
     s.map("Ghost.TButton", bordercolor=[("active", C["muted"])], background=[("active", C["muted"])])
     s.configure("Small.TButton", padding=(8, 3), font=fonts.small)
+    # Bouton à menu (« Exporter ▾ ») : même allure qu'un bouton à contour, sans flèche ajoutée
+    s.layout("TMenubutton", [("Menubutton.border", {"sticky": "nswe", "children": [
+        ("Menubutton.padding", {"sticky": "nswe", "children": [("Menubutton.label", {"sticky": "nswe"})]})]})])
+    s.configure("TMenubutton", background=C["card"], foreground=C["fg"], bordercolor=C["border"],
+                lightcolor=C["card"], darkcolor=C["card"], padding=(12, 6), relief="solid", borderwidth=1)
+    s.map("TMenubutton", background=[("disabled", C["card"]), ("active", C["muted"])],
+          foreground=[("disabled", C["ring"])])
     s.configure("Icon.TButton", padding=(7, 3))
 
     # Champs

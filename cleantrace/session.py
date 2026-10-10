@@ -12,8 +12,8 @@ import numpy as np
 import pandas as pd
 
 from .cleaning import (
-    CleaningOptions, CleaningReport, clean_signal, default_noise_threshold, has_rest_phase,
-    suggest_noise_threshold,
+    CleaningOptions, CleaningReport, clean_signal, default_noise_threshold, estimate_rest_offset,
+    has_rest_phase, suggest_noise_threshold,
 )
 from .editing import interpolate_at
 from .export import Key, merge_selection, write_csv
@@ -49,6 +49,22 @@ class Session:
         self.window: Optional[Tuple[float, float]] = None  # période commune (minutes)
         self.export_step_s: Optional[float] = None
         self.noise_thresholds: Dict[Key, Optional[float]] = {}  # seuils de bruit réglés par voie
+        self.offsets: Dict[Key, Optional[float]] = {}  # décalages de zéro réglés par voie
+        self.journal: List[Tuple[pd.Timestamp, str]] = []  # traçabilité des traitements
+
+    # ------------------------------------------------------------------ journal
+
+    def log(self, text: str) -> None:
+        """Ajoute une ligne au journal des traitements (joint aux exports et au rapport)."""
+        self.journal.append((pd.Timestamp.now().floor("s"), text))
+
+    def journal_text(self) -> str:
+        from . import __version__
+
+        lines = ["Journal des traitements — CleanTrace v{}".format(__version__),
+                 "Édité le {}".format(pd.Timestamp.now().strftime("%d/%m/%Y %H:%M")), ""]
+        lines += ["{}  {}".format(t.strftime("%d/%m/%Y %H:%M:%S"), text) for t, text in self.journal]
+        return "\n".join(lines) + "\n"
 
     # ----------------------------------------------------------------- fichiers
 
@@ -85,6 +101,12 @@ class Session:
         for m in measurements:
             self.measurements[m.name] = m
             self._raw[m.name] = m.data.copy()
+            end = m.start + pd.Timedelta(minutes=m.duration_min) if m.start is not None else None
+            self.log("Fichier ouvert : {} — {} · {} · {} points{} · voies : {}".format(
+                m.name, m.source, m.period_label, len(m.data),
+                " · du {} au {}".format(m.start.strftime("%d/%m/%Y %H:%M:%S"), end.strftime("%d/%m/%Y %H:%M:%S"))
+                if end is not None else "",
+                ", ".join(ch.label for ch in m.channels)))
         self._realign()
 
     def remove_file(self, name: str) -> None:
@@ -100,12 +122,15 @@ class Session:
         self.time_offset_min = 0.0
         self.window = None
         self.noise_thresholds.clear()
+        self.offsets.clear()
+        self.journal.clear()
 
     def set_time_mode(self, mode: str) -> None:
         if mode not in TIME_MODES:
             raise ValueError(mode)
         self.time_mode = mode
         self._realign()
+        self.log("Base de temps : {}".format(TIME_MODES[mode]))
 
     @property
     def percent_axis(self) -> bool:
@@ -150,47 +175,98 @@ class Session:
     def suggest_noise_threshold(self, key: Key) -> Optional[float]:
         return suggest_noise_threshold(self.measurements[key[0]].data[key[1]].to_numpy(dtype=float))
 
+    def zero_offset(self, key: Key) -> Optional[float]:
+        """Décalage de zéro de la voie : réglé par l'utilisateur, sinon celui mesuré au repos."""
+        if key in self.offsets:
+            return self.offsets[key]
+        return self.suggest_offset(key)
+
+    def suggest_offset(self, key: Key) -> Optional[float]:
+        return estimate_rest_offset(self.measurements[key[0]].data[key[1]].to_numpy(dtype=float))
+
     def preview_cleaning(
-        self, keys: Sequence[Key], options: CleaningOptions, thresholds: Optional[Dict[Key, Optional[float]]] = None
+        self, keys: Sequence[Key], options: CleaningOptions,
+        thresholds: Optional[Dict[Key, Optional[float]]] = None,
+        offsets: Optional[Dict[Key, Optional[float]]] = None,
+        progress: Optional[Callable] = None,
     ) -> Dict[Key, CleaningReport]:
         """Nombre de points que le nettoyage modifierait, voie par voie (sans rien modifier)."""
         out = {}
-        for key in keys:
+        for i, key in enumerate(keys):
+            if progress:
+                progress("Aperçu — voie {}/{} : {}".format(i + 1, len(keys), key[1]), i / len(keys))
             m = self.measurements[key[0]]
             threshold = (thresholds or {}).get(key, self.noise_threshold(key))
+            offset = (offsets or {}).get(key, self.zero_offset(key))
             _, out[key] = clean_signal(m.data[key[1]].to_numpy(dtype=float), m.channel(key[1]).unit,
-                                       options, noise_threshold=threshold)
+                                       options, noise_threshold=threshold, offset=offset)
         return out
 
     def apply_cleaning(
-        self, keys: Sequence[Key], options: CleaningOptions, thresholds: Optional[Dict[Key, Optional[float]]] = None
+        self, keys: Sequence[Key], options: CleaningOptions,
+        thresholds: Optional[Dict[Key, Optional[float]]] = None,
+        offsets: Optional[Dict[Key, Optional[float]]] = None,
+        progress: Optional[Callable] = None,
     ) -> CleaningReport:
-        """US-03 : nettoie les voies. ``thresholds`` : seuils de bruit par voie (mémorisés)."""
+        """US-03 : nettoie les voies. Seuils et décalages par voie mémorisés, opérations journalisées."""
         if thresholds:
             self.noise_thresholds.update(thresholds)
+        if offsets:
+            self.offsets.update(offsets)
         total = CleaningReport()
-        for key in keys:
+        for i, key in enumerate(keys):
             name, label = key
+            if progress:
+                progress("Nettoyage — voie {}/{} : {}".format(i + 1, len(keys), label), i / len(keys))
             m = self.measurements[name]
             ch = m.channel(label)
+            threshold, offset = self.noise_threshold(key), self.zero_offset(key)
             cleaned, report = clean_signal(m.data[label].to_numpy(dtype=float), ch.unit, options,
-                                           noise_threshold=self.noise_threshold(key))
+                                           noise_threshold=threshold, offset=offset)
             m.data[label] = cleaned
             total.noise_points += report.noise_points
             total.peak_points += report.peak_points
+            done = []
+            if report.offset:
+                done.append("décalage de zéro {:+.4g} {} soustrait".format(report.offset, ch.unit))
+            if options.remove_peaks:
+                done.append("{} point(s) de pics parasites corrigés ({}, ≤ {} points)".format(
+                    report.peak_points, "saturation > {:.0%} du max".format(options.saturation_ratio)
+                    if options.peak_mode == "saturation" else "tous les pics étroits", options.max_peak_width))
+            if options.remove_noise:
+                done.append("{} point(s) de bruit de repos mis à 0 (seuil {})".format(
+                    report.noise_points, "{:g} {}".format(threshold, ch.unit) if threshold else "aucun"))
+            self.log("Nettoyage {} [{}] : {}".format(label, name, " ; ".join(done) or "rien"))
         return total
 
     def restore_raw(self, keys: Sequence[Key]) -> None:
         """Annule nettoyages et corrections des voies données."""
         for name, label in keys:
             self.measurements[name].data[label] = self._raw[name][label].to_numpy(copy=True)
+            self.log("Données brutes restaurées : {} [{}]".format(label, name))
+
+    def modified_points(self, key: Key) -> int:
+        """Nombre de points qui diffèrent des données brutes (nettoyage + corrections)."""
+        name, label = key
+        now = self.measurements[name].data[label].to_numpy(dtype=float)
+        raw = self._raw[name][label].to_numpy(dtype=float)
+        return int(np.sum(~((now == raw) | (np.isnan(now) & np.isnan(raw)))))
+
+    def raw_values(self, key: Key) -> np.ndarray:
+        return self._raw[key[0]][key[1]].to_numpy(dtype=float)
 
     def correct_point(self, key: Key, index: int) -> float:
         """US-05 : remplace le point ``index`` par l'interpolation de ses voisins."""
         name, label = key
         df = self.measurements[name].data
+        old = float(df[label].iloc[index])
         value = interpolate_at(df[TIME_COL].to_numpy(), df[label].to_numpy(), index)
         self.set_value(key, index, value)
+        m = self.measurements[name]
+        when = (m.start + pd.Timedelta(minutes=float(m.elapsed_min[index]))).strftime("%d/%m/%Y %H:%M:%S.%f")[:-5] \
+            if m.start is not None else format_hms_safe(float(m.elapsed_min[index]))
+        self.log("Correction au clic : {} [{}] point n°{} ({}) : {:.6g} -> {:.6g}".format(
+            label, name, index + 1, when, old, value))
         return value
 
     def set_value(self, key: Key, index: int, value: float) -> None:
@@ -201,7 +277,8 @@ class Session:
 
     # ---------------------------------------------------------------- affichage
 
-    def series(self, keys: Sequence[Key]) -> List[PlotSeries]:
+    def series(self, keys: Sequence[Key], with_raw: bool = False) -> List[PlotSeries]:
+        """Courbes à tracer. ``with_raw`` : ajoute, sous chaque voie modifiée, ses données brutes."""
         several_files = len({name for name, _ in keys}) > 1
         out = []
         for i, (name, label) in enumerate(keys):
@@ -226,18 +303,30 @@ class Session:
                     index_base=first,
                 )
             )
+            if with_raw and self.modified_points((name, label)):
+                raw = self.raw_values((name, label))[first:first + len(x)]
+                out.append(PlotSeries(gid="raw:{}".format(i), label="_brut", x=x, y=raw, unit=ch.unit,
+                                      quantity=ch.quantity, shiftable=out[-1].shiftable, index_base=first, raw=True))
         return out
 
     # ------------------------------------------------------------------- export
 
-    def export_csv(self, path, keys: Sequence[Key]) -> pd.DataFrame:
+    def export_csv(self, path, keys: Sequence[Key], progress: Optional[Callable] = None) -> pd.DataFrame:
+        """US-06 : CSV des voies + journal des traitements à côté (« …_journal.txt »)."""
         if self.reference is None:
             raise ValueError("Aucun fichier chargé.")
+        if progress:
+            progress("Fusion de {} voie(s) sur une base de temps commune…".format(len(keys)), 0.1)
         df = merge_selection(
             list(self.measurements.values()), self.reference, keys, self.time_offset_min,
             window=self.window, step_s=self.export_step_s, percent=self.percent_axis,
         )
+        if progress:
+            progress("Écriture de {} lignes dans {}…".format(len(df), Path(path).name), 0.5)
         write_csv(df, path)
+        self.log("Export CSV : {} ({} lignes × {} voies, base de temps : {}, grille : {})".format(
+            Path(path).name, len(df), len(keys), TIME_MODES[self.time_mode], EXPORT_STEPS[self.export_step_s]))
+        journal_path(path).write_text(self.journal_text(), encoding="utf-8")
         return df
 
     # --------------------------------------------------------------- interne
@@ -269,6 +358,18 @@ class Session:
         start = max(float(m.data[TIME_COL].iloc[0]) for m in aligned)
         end = min(float(m.data[TIME_COL].iloc[-1]) for m in aligned)
         return (start, end) if end > start else None
+
+
+def journal_path(path) -> Path:
+    """Fichier journal joint à un export : « essai.csv » -> « essai_journal.txt »."""
+    path = Path(path)
+    return path.with_name(path.stem + "_journal.txt")
+
+
+def format_hms_safe(minutes: float) -> str:
+    from .plotting import format_hms
+
+    return format_hms(minutes)
 
 
 def _unique_name(name: str, taken) -> str:

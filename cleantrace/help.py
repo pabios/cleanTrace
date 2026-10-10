@@ -21,6 +21,16 @@ Le nettoyage s'applique aux voies COCHÉES, quand vous cliquez sur « Nettoyer�
 Une fenêtre montre, voie par voie, le seuil utilisé et le nombre de points qui seront
 modifiés AVANT d'appliquer (bouton « Aperçu »).
 
+Ordre des traitements : 1. décalage de zéro, 2. pics parasites, 3. bruit de repos.
+Chaque traitement appliqué est noté dans le journal (bouton « Journal »).
+
+Décalage de zéro
+  Si le niveau de repos d'une voie n'est pas exactement 0 (ex. −0,04 A au lieu de 0 :
+  dérive du capteur ou du shunt), ce décalage est mesuré et soustrait à toute la voie.
+  Il n'est proposé que pour les voies qui reviennent au repos près de 0 ; jamais pour
+  une tension d'alimentation (24 V permanents) ni un petit courant permanent. La
+  valeur est modifiable (ou à vider) dans la colonne « DÉCALAGE 0 ».
+
 Pics parasites
   Un groupe de points est un pic parasite si :
   • il est étroit : 5 points consécutifs au plus (réglable ; à 100 ms, 5 points = 0,5 s) ;
@@ -50,6 +60,10 @@ Bruit de repos (forcer à 0)
   « 0 point » est normal sur une voie qui ne revient jamais à 0 (ex. courant toujours
   entre 80 et 160 mA).
 
+Vérifier le résultat
+  « Montrer les données brutes (en gris) » affiche, sous chaque voie nettoyée ou
+  corrigée, ses données d'origine : on voit exactement ce qui a été modifié.
+
 Annuler
   « Annuler le nettoyage » remet les données brutes : annule nettoyages ET corrections au clic des voies
   cochées."""),
@@ -72,6 +86,23 @@ pour avoir une valeur de chaque appareil sur chaque ligne (mesure la plus proche
 
 Décalage enceinte climatique : décale les courbes des fichiers ne contenant que des
 °C / %HR (nanodac) si l'enceinte réagit avec retard."""),
+
+    ("Livrables pour le client", """\
+Menu « Exporter » :
+• Données nettoyées (CSV + journal) : le CSV « ; » des voies cochées, et à côté un fichier
+  « …_journal.txt » qui liste tous les traitements appliqués (traçabilité).
+• Image du graphique (PNG, PDF, SVG) : le graphique tel qu'affiché (même zoom), au
+  format A4 paysage, pour l'insérer dans un rapport.
+• Rapport PDF pour le client : synthèse (fichiers sources, appareils, périodes, base de
+  temps), statistiques par voie sur la période affichée (min, max, moyenne,
+  écart-type, points modifiés), graphique et journal des traitements.
+Astuce : zoomez sur la période utile avant d'exporter l'image ou le rapport."""),
+
+    ("En cas de problème", """\
+Les longues opérations (ouverture, nettoyage, exports) affichent leur avancement ; la
+fenêtre reste utilisable. En cas d'erreur, un message l'explique et les détails
+techniques sont enregistrés dans le fichier « cleantrace_erreurs.log » de votre
+dossier personnel (C:\\Users\\<vous>) : envoyez-le au développeur avec une capture."""),
 
     ("Fichier refusé", """\
 Si un fichier n'est pas reconnu, le message indique ce qui a été lu. Répondez « Oui »

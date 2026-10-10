@@ -45,6 +45,14 @@ def wait_idle(root, gui, timeout=300):
     pump(root)
 
 
+def wait_dialog(dialog, timeout=120):
+    end = time.time() + timeout
+    while dialog.winfo_exists() and dialog.busy and time.time() < end:
+        dialog.update()
+        time.sleep(0.05)
+    pump(dialog)
+
+
 def shot_window(win, name):
     pump(win)
     x, y = win.winfo_rootx(), win.winfo_rooty()
@@ -80,12 +88,26 @@ def main():
     shot(root, "2_shunt_brut.png")
 
     dialog = gui.clean_selected()
-    pump(root)
+    wait_dialog(dialog)
     shot_window(dialog, "3a_fenetre_nettoyage.png")
     dialog.apply()
     wait_idle(root, gui)
     print("état :", gui.status.get())
     shot(root, "3_shunt_nettoye.png")
+
+    # Livrables : image du graphique et rapport PDF
+    app_module.filedialog.asksaveasfilename = lambda **k: str(OUT / "graphique.png")
+    gui.export_image()
+    wait_idle(root, gui)
+    app_module.filedialog.asksaveasfilename = lambda **k: str(OUT / "rapport.pdf")
+    gui.export_report()
+    wait_idle(root, gui)
+    app_module.filedialog.asksaveasfilename = lambda **k: str(OUT / "export.csv")
+    assert (OUT / "graphique.png").exists() and (OUT / "rapport.pdf").exists(), dialogs
+    journal = app_module.JournalWindow.open(root, gui.session.journal_text())
+    shot_window(journal, "3b_journal.png")
+    journal.destroy()
+    print("livrables : graphique.png, rapport.pdf, journal OK")
 
     # Correction au clic : on abîme un point, puis on clique dessus sur le canevas
     df = gui.session.measurements[shunt[0]].data
@@ -151,10 +173,10 @@ def main():
     gui.open_files([str(ROOT / "exemples" / "autres_formats" / "GL860_1s.CSV")])
     wait_idle(root, gui)
     dialog = gui.clean_selected()
-    pump(root)
+    wait_dialog(dialog)
     shot_window(dialog, "10_nettoyage_gl860_defaut.png")
     dialog.use_suggestions()
-    pump(root)
+    wait_dialog(dialog)
     shot_window(dialog, "11_nettoyage_gl860_suggestions.png")
     dialog.apply()
     wait_idle(root, gui)

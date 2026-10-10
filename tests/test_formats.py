@@ -210,3 +210,24 @@ def test_units_row_with_date_time_formats(tmp_path):
     m = load_measurement(path)
     assert [c.label for c in m.channels] == ["Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)"]
     assert m.start == START and m.period_s == pytest.approx(0.1)
+
+
+
+@pytest.mark.parametrize("units_row", [
+    "No.,yyyy/mm/dd,hh:mm:ss,us,V,A,,",          # unités + formats de date
+    "Number,Date,Time,us,V,A,Alarm,AlarmOut",    # en-tête répété avec les unités
+    "Number,Date,Time,us,A,B,Alarm,AlarmOut",    # colonnes nommées par des lettres
+])
+def test_graphtec_channels_named_from_amp_settings(tmp_path, units_row):
+    """Quelle que soit la ligne sous « Data », les voies portent les noms du tableau AMP settings."""
+    lines = ["Vendor,GRAPHTEC Corporation", "Model,GL980", "Sampling interval,100ms", "AMP settings",
+             "CH,Signal name,Amp,Input,Range,Filter,Span,,Unit",
+             "CH3,U_alim,M,DC,50V,Off,25,-25,V", "CH4,I_s1,M,DC,50mV,Off,10,-10,A", "Data", units_row]
+    for k in range(100):
+        ts = START + pd.Timedelta(milliseconds=100 * k)
+        lines.append("{},{},{},{},+24.0,{:+.3f},LLLL,LLLL".format(
+            k + 1, ts.strftime("%Y/%m/%d"), ts.strftime("%H:%M:%S"), ts.microsecond, 0.001 * k))
+    path = tmp_path / "Mes-_260601-170139.CSV"
+    path.write_text("\n".join(lines) + "\n")
+    m = load_measurement(path)
+    assert [c.label for c in m.channels] == ["Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)"]

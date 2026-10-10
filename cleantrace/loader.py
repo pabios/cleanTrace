@@ -253,8 +253,7 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
     time_s, rebuilt = _rebuild_coarse_time(time_s, _declared_sampling(head_rows[:first_data]))
 
     # Voies de mesure : toutes les autres colonnes numériques
-    channels: List[Channel] = []
-    values = {}
+    numeric_cols = []
     over_range = 0
     for col in raw.columns:
         if col in used_cols or _INDEX_NAME_RE.match(col.strip()) or not col.strip():
@@ -268,8 +267,22 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
             column = _to_numeric(column, decimal)
         if column.notna().sum() == 0:
             continue  # colonne de texte (alarmes, messages...)
-        alias = signal_names.get(col, ("", ""))[0] or aliases.get(col, "")
-        ch = make_channel(col, units.get(col), alias=alias, default_unit=default_unit)
+        numeric_cols.append((col, column))
+
+    # Graphtec dont l'en-tête des données ne porte pas les noms « CH3, CH4… » (unités,
+    # numéros…) : les voies du tableau AMP settings sont rattachées dans l'ordre.
+    by_order = {}
+    if (signal_names and len(signal_names) == len(numeric_cols)
+            and not any(col in signal_names for col, _ in numeric_cols)):
+        by_order = {col: ch for (col, _), ch in zip(numeric_cols, signal_names)}
+
+    channels: List[Channel] = []
+    values = {}
+    for col, column in numeric_cols:
+        ch_name = by_order.get(col, col)
+        alias = signal_names.get(ch_name, ("", ""))[0] or aliases.get(col, "")
+        unit = signal_names[ch_name][1] if col in by_order else units.get(col)
+        ch = make_channel(ch_name, unit, alias=alias, default_unit=default_unit)
         label = _unique(ch.label, values)
         if label != ch.label:
             ch = Channel(ch.raw_name, label, ch.unit, ch.quantity)
