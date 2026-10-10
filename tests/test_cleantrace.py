@@ -303,6 +303,28 @@ def test_noisy_plateau_top_is_not_shaved():
     assert n == 2 and abs(out[200] - 85) < 5 and abs(out[400] - 160) < 5  # remis au niveau du palier
 
 
+def test_spikes_of_any_height_removed_edges_untouched():
+    """Parasites de hauteurs variées (pas seulement la saturation), y compris juste avant un
+    front de créneau : tous retirés, et le front lui-même n'est pas déformé."""
+    rng = np.random.default_rng(0)
+    n = 20000
+    i = np.arange(n)
+    clean = np.where((i // 2000) % 2 == 1, 0.3 * np.exp(-((i % 2000) / 1500)), 0.0) + rng.normal(0, 0.003, n)
+    y = clean.copy()
+    spikes = list(rng.choice(np.arange(50, n - 50), 40, replace=False)) + [1995]  # 1995 : juste avant un front
+    for pos in spikes:
+        y[pos:pos + 2] = rng.choice([-1, 1]) * rng.uniform(0.8, 3.6)
+    out, n_fixed = remove_saturation_peaks(y)
+    assert np.sum(np.abs(out) > 0.5) == 0  # plus aucun parasite
+    hit = np.zeros(n, bool)
+    for pos in spikes:
+        hit[pos:pos + 2] = True
+    np.testing.assert_array_equal(out[~hit], y[~hit])  # rien d'autre n'a bougé (fronts compris)
+    # l'ancienne règle (saturation seule) laissait la plupart des parasites
+    old, _ = remove_saturation_peaks(y, saturation_only=True)
+    assert np.sum(np.abs(old) > 0.5) > 20
+
+
 def test_pure_noise_channel_untouched():
     """Voie sans signal (0,02 mA ± bruit) : rien n'est un pic."""
     rng = np.random.default_rng(4)

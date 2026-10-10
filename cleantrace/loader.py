@@ -604,10 +604,18 @@ _UNIT_CELL_RE = re.compile(r"^[%°ºµA-Za-z/.\- ]{0,8}$")
 _ALARM_LABEL_RE = re.compile(r"^[A-Za-z]\d{3,}$")  # « A1234567890 » (GL860)
 
 
+_TIME_FORMAT_CELL_RE = re.compile(r"^[YyMmDdHhSsUuµ/:.,\- ]{2,24}$")  # « yyyy/mm/dd », « hh:mm:ss »
+
+
 def _looks_like_unit_row(row: List[str]) -> bool:
-    """Ligne d'unités sous les en-têtes : « "","","","V","mV","degC" » ou « NO.,Time,ms,V,mA »."""
+    """Ligne d'unités sous les en-têtes : « "","","","V","mV","degC" », « NO.,Time,ms,V,mA »
+    ou « No.,yyyy/mm/dd,hh:mm:ss,us,V,A » (formats de date / heure dans les colonnes temps)."""
     cells = [c.strip().strip('"').strip("()[]") for c in row]
-    return any(cells) and all(_UNIT_CELL_RE.match(c) or _ALARM_LABEL_RE.match(c) for c in cells)
+    filled = [c for c in cells if c]
+    if not filled or any(_NUMBER_RE.match(c) for c in filled):
+        return False
+    return all(_UNIT_CELL_RE.match(c) or _ALARM_LABEL_RE.match(c) or _TIME_FORMAT_CELL_RE.match(c)
+               for c in filled)
 
 
 def _find_headers(rows, first_data, n_cols):

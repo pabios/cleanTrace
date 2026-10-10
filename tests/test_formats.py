@@ -192,3 +192,21 @@ def test_excel_row_limit_is_reported(tmp_path):
     m = load_measurement(path)
     assert len(m.data) == 1000
     assert any("1 718 363" in w and "1 000" in w for w in m.warnings)
+
+
+def test_units_row_with_date_time_formats(tmp_path):
+    """GL980 réel : sous « Number,Date,Time,us,CH3… » une ligne d'unités avec des formats de
+    date / heure. Elle ne doit pas devenir les noms des voies (« A », « A (2) »…)."""
+    lines = ["Vendor,GRAPHTEC Corporation", "Model,GL980", "Sampling interval,100ms", "AMP settings",
+             "CH,Signal name,Amp,Input,Range,Filter,Span,,Unit",
+             "CH3,U_alim,M,DC,50V,Off,25,-25,V", "CH4,I_s1,M,DC,50mV,Off,10,-10,A", "Data",
+             "Number,Date,Time,us,CH3,CH4,Alarm,AlarmOut", "No.,yyyy/mm/dd,hh:mm:ss,us,V,A,,"]
+    for k in range(100):
+        ts = START + pd.Timedelta(milliseconds=100 * k)
+        lines.append("{},{},{},{},+24.0,{:+.3f},LLLL,LLLL".format(
+            k + 1, ts.strftime("%Y/%m/%d"), ts.strftime("%H:%M:%S"), ts.microsecond, 0.001 * k))
+    path = tmp_path / "Mes-_260601-170139.CSV"
+    path.write_text("\n".join(lines) + "\n")
+    m = load_measurement(path)
+    assert [c.label for c in m.channels] == ["Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)"]
+    assert m.start == START and m.period_s == pytest.approx(0.1)

@@ -21,19 +21,19 @@ Le nettoyage s'applique aux voies COCHÉES, quand vous cliquez sur « Nettoyer�
 Une fenêtre montre, voie par voie, le seuil utilisé et le nombre de points qui seront
 modifiés AVANT d'appliquer (bouton « Aperçu »).
 
-Pics de saturation
-  Un point est corrigé seulement si les 3 conditions sont réunies :
-  • il est au-delà de 98 % du maximum de la voie (ou du minimum, côté négatif) ;
-  • il fait partie d'un groupe de 5 points consécutifs au plus (au-delà, c'est un vrai
-    palier) ;
-  • il dépasse le niveau de la courbe autour de lui d'au moins 5 % de l'amplitude de
-    la voie ET d'au moins 8 fois le bruit de mesure (le haut du bruit d'un palier réel
-    n'est donc jamais pris pour un pic).
-  Il est remplacé par le niveau de la courbe autour de lui (médiane locale). Rien d'autre n'est touché :
-  créneaux, paliers et décharges restent identiques. Les trous courts (« +++++++ »,
-  « BURNOUT ») sont comblés par les points voisins.
-  Limites : un vrai pic de 5 points au plus qui atteint le maximum serait retiré ; un
-  parasite qui ne monte pas près du maximum n'est pas détecté (corrigez-le au clic).
+Pics parasites
+  Un groupe de points est un pic parasite si :
+  • il est étroit : 5 points consécutifs au plus (réglable ; à 100 ms, 5 points = 0,5 s) ;
+  • il s'écarte du niveau de la courbe autour de lui de plus de 8 fois le bruit de mesure
+    ET de plus de 5 % de l'amplitude utile de la voie (calculée sans les pics).
+  Sa hauteur ne compte pas : un parasite de 1 A est retiré comme un de 10 A. Il est
+  remplacé par le niveau de la courbe autour de lui (médiane locale). Rien d'autre n'est
+  touché : créneaux, paliers, décharges et bruit normal restent identiques. Les trous
+  courts (« +++++++ », « BURNOUT ») sont comblés par les points voisins.
+  Option « Seulement la saturation » : ne retire que les pics au-delà de 98 % du maximum
+  de la voie (règle d'origine du cahier des charges).
+  Limites : un vrai phénomène plus court que la largeur réglée serait retiré ; un
+  parasite plus large ne l'est pas (augmentez la largeur, ou corrigez au clic).
 
 Bruit de repos (forcer à 0)
   Pendant les arrêts, un courant ou une tension oscille autour de 0 : les valeurs dont

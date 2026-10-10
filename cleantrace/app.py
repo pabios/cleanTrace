@@ -140,12 +140,12 @@ class CleanTraceApp:
             return lambda header: ttk.Button(header, text="?", style="Icon.TButton", width=2,
                                              command=lambda: HelpWindow.open(self.root, section)).pack(side=tk.RIGHT)
 
-        outer, clean = card(side, "Nettoyage", "Pics de saturation et bruit de repos des voies cochées.",
+        outer, clean = card(side, "Nettoyage", "Pics parasites et bruit de repos des voies cochées.",
                             actions=help_action("Nettoyage"))
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         self.chk_noise = tk.BooleanVar(value=True)
         self.chk_peaks = tk.BooleanVar(value=True)
-        ttk.Checkbutton(clean, text="Supprimer les pics de saturation", variable=self.chk_peaks,
+        ttk.Checkbutton(clean, text="Supprimer les pics parasites", variable=self.chk_peaks,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
         ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos", variable=self.chk_noise,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
@@ -351,8 +351,8 @@ class CleanTraceApp:
 
         def done(report):
             self.redraw()
-            message = "Nettoyage de {} voie(s) : {} pic(s) supprimé(s), {} point(s) de bruit forcés à 0.".format(
-                len(keys), report.peak_points, report.noise_points)
+            message = "Nettoyage de {} voie(s) : {} point(s) de pics corrigés, {} point(s) de bruit forcés à 0.".format(
+                len(keys), _thousands(report.peak_points), _thousands(report.noise_points))
             if options.remove_noise and report.noise_points == 0:
                 message += " Aucun repos sous le seuil : voies qui ne reviennent pas à 0, ou seuil trop bas."
             self._set_status(message)
@@ -599,6 +599,10 @@ class CleanTraceApp:
         details = "".join(traceback.format_exception(exc_type, exc, tb))
         print(details)
         messagebox.showerror("Erreur inattendue", "{}\n\n(détails dans la console)".format(exc), parent=self.root)
+
+
+def _thousands(n: int) -> str:
+    return "{:,}".format(n).replace(",", " ")
 
 
 def _flatten_toolbar(toolbar) -> None:

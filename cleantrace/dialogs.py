@@ -10,6 +10,11 @@ from .export import Key
 from .help import HelpWindow
 from .theme import C, card
 
+PEAK_MODES = {
+    "all": "Tous les pics étroits (recommandé)",
+    "saturation": "Seulement la saturation, au-delà de",
+}
+
 
 def _fmt(value: Optional[float]) -> str:
     return "" if value is None else "{:g}".format(value).replace(".", ",")
@@ -50,18 +55,26 @@ class CleaningDialog(tk.Toplevel):
         outer.pack(fill=tk.X)
         top = ttk.Frame(box, style="Card.TFrame")  # grille (card() place son titre avec pack)
         top.pack(fill=tk.X)
-        ttk.Checkbutton(top, text="Supprimer les pics de saturation", variable=app.chk_peaks,
+        ttk.Checkbutton(top, text="Supprimer les pics parasites", variable=app.chk_peaks,
                         style="Card.TCheckbutton").grid(row=0, column=0, sticky=tk.W)
-        ttk.Label(top, text="au-delà de", style="Card.TLabel").grid(row=0, column=1, padx=(12, 4))
-        self.saturation = tk.StringVar(value="98")
-        ttk.Spinbox(top, from_=50, to=100, increment=1, width=5, textvariable=self.saturation).grid(row=0, column=2)
-        ttk.Label(top, text="% du max, groupes de", style="Card.TLabel").grid(row=0, column=3, padx=4)
+        ttk.Label(top, text="larges de", style="Card.TLabel").grid(row=0, column=1, padx=(12, 4))
         self.width = tk.StringVar(value="5")
-        ttk.Spinbox(top, from_=1, to=50, increment=1, width=4, textvariable=self.width).grid(row=0, column=4)
-        ttk.Label(top, text="points max", style="Card.TLabel").grid(row=0, column=5, padx=4)
+        ttk.Spinbox(top, from_=1, to=50, increment=1, width=4, textvariable=self.width).grid(row=0, column=2)
+        ttk.Label(top, text="points au plus", style="Card.TLabel").grid(row=0, column=3, padx=4, sticky=tk.W)
+        self.peak_mode = tk.StringVar(value=PEAK_MODES["all"])
+        mode = ttk.Combobox(top, textvariable=self.peak_mode, values=list(PEAK_MODES.values()),
+                            state="readonly", width=34)
+        mode.grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=(26, 0), pady=(4, 0))
+        mode.bind("<<ComboboxSelected>>", lambda _e: self._on_peak_mode())
+        self.saturation = tk.StringVar(value="98")
+        self.saturation_box = ttk.Spinbox(top, from_=50, to=100, increment=1, width=4,
+                                          textvariable=self.saturation)
+        self.saturation_box.grid(row=1, column=2, pady=(4, 0))
+        ttk.Label(top, text="% du max", style="Card.TLabel").grid(row=1, column=3, padx=4, pady=(4, 0), sticky=tk.W)
+        self._on_peak_mode()
         ttk.Checkbutton(top, text="Forcer à 0 le bruit de repos (seuil par voie ci-dessous)",
                         variable=app.chk_noise, style="Card.TCheckbutton").grid(
-            row=1, column=0, columnspan=6, sticky=tk.W, pady=(6, 0))
+            row=2, column=0, columnspan=6, sticky=tk.W, pady=(8, 0))
 
         # --- tableau des voies
         outer, table_box = card(body, "Voies cochées",
@@ -136,10 +149,15 @@ class CleaningDialog(tk.Toplevel):
 
     # ------------------------------------------------------------------- actions
 
+    def _on_peak_mode(self) -> None:
+        saturation = self.peak_mode.get() == PEAK_MODES["saturation"]
+        self.saturation_box.state(["!disabled"] if saturation else ["disabled"])
+
     def options(self) -> CleaningOptions:
         return CleaningOptions(
             remove_noise=self.app.chk_noise.get(),
             remove_peaks=self.app.chk_peaks.get(),
+            peak_mode="saturation" if self.peak_mode.get() == PEAK_MODES["saturation"] else "all",
             saturation_ratio=float(self.saturation.get().replace(",", ".")) / 100.0,
             max_peak_width=int(self.width.get()),
         )

@@ -4,12 +4,13 @@ Règles métier :
 
 1. **Bruit de repos** (``chk_noise``) : pendant les phases d'arrêt, tout signal sous le
    seuil physique (< 10 mA, < 5 mV...) est forcé à 0.0.
-2. **Pics de saturation** (``chk_peaks``) : les groupes d'échantillons étroits proches du
-   plafond de mesure (> 98 % du max) qui dépassent l'enveloppe minimale SciPy
-   (``minimum_filter1d`` suivi de ``maximum_filter1d``, c'est-à-dire une ouverture
-   morphologique) ET le niveau local de la courbe de beaucoup plus que le bruit de
-   mesure, sont remplacés par ce niveau local (médiane glissante), puis lissés par
+2. **Pics parasites** (``chk_peaks``) : les groupes d'échantillons étroits (5 points au
+   plus) qui s'écartent du niveau local de la courbe (médiane glissante) de beaucoup plus
+   que le bruit de mesure sont remplacés par ce niveau local, puis lissés par
    ``gaussian_filter1d``. Le haut du bruit d'un palier réel n'est donc jamais raboté.
+   Mode « saturation » (règle d'origine du cahier des charges) : seulement les pics
+   au-delà de 98 % du max, qui dépassent aussi l'enveloppe minimale SciPy
+   (``minimum_filter1d`` puis ``maximum_filter1d``, ouverture morphologique).
 
 Garanties (critères d'acceptation) :
 
@@ -41,6 +42,7 @@ NOISE_THRESHOLDS = {
 class CleaningOptions:
     remove_noise: bool = True  # chk_noise
     remove_peaks: bool = True  # chk_peaks
+    peak_mode: str = "all"  # "all" : tous les pics étroits ; "saturation" : seulement > saturation_ratio × max
     saturation_ratio: float = 0.98  # seuil "proche du plafond" (fraction du max)
     max_peak_width: int = 5  # largeur max d'un pic parasite (échantillons)
     min_prominence: float = 0.05  # hauteur min d'un pic au-dessus de l'enveloppe (fraction de l'amplitude)
@@ -126,6 +128,7 @@ def clean_signal(
             min_prominence=options.min_prominence,
             sigma=options.smoothing_sigma,
             noise_factor=options.noise_factor,
+            saturation_only=options.peak_mode == "saturation",
         )
     if options.remove_noise:
         threshold = default_noise_threshold(unit) if noise_threshold is _DEFAULT else noise_threshold
@@ -172,8 +175,16 @@ def remove_saturation_peaks(
     sigma: float = 1.0,
     max_iter: int = 5,
     noise_factor: float = 8.0,
+    saturation_only: bool = False,
 ) -> Tuple[np.ndarray, int]:
-    """Supprime les pics de saturation (positifs et négatifs) sans toucher au reste du signal."""
+    """Supprime les pics parasites (positifs et négatifs) sans toucher au reste du signal.
+
+    Un pic est un groupe d'au plus ``max_width`` points consécutifs qui s'écarte du niveau
+    local de la courbe (médiane glissante) de plus de ``noise_factor`` × le bruit de mesure
+    ET de plus de ``min_prominence`` × l'amplitude utile de la voie (calculée sans les pics).
+    Avec ``saturation_only``, seuls les pics au-delà de ``ratio`` × le maximum (ou le
+    minimum) sont concernés — la règle d'origine du cahier des charges.
+    """
     out = np.asarray(y, dtype=float).copy()
     finite = np.isfinite(out)
     if finite.sum() < 3:
@@ -190,19 +201,27 @@ def remove_saturation_peaks(
         upper_env = maximum_filter1d(minimum_filter1d(work, size, mode="nearest"), size, mode="nearest")
         lower_env = minimum_filter1d(maximum_filter1d(work, size, mode="nearest"), size, mode="nearest")
 
-        amplitude = float(np.max(work) - np.min(work))
-        if amplitude == 0:
-            break
-        prominence = min_prominence * amplitude
-        # Niveau local de la courbe (médiane glissante, insensible à un pic de 5 points) et
-        # écart minimal pour parler de pic : jamais moins de noise_factor × le bruit de mesure,
-        # sinon le haut du bruit d'un palier réel serait raboté.
+        # Niveau local de la courbe (médiane glissante, insensible à un pic de max_width points)
         level = median_filter(work, size=4 * max_width + 1, mode="nearest")
+        if saturation_only:
+            amplitude = float(np.max(work) - np.min(work))
+        else:  # amplitude utile, sans les pics (sinon un grand pic en masquerait de plus petits)
+            amplitude = float(np.percentile(level, 99.9) - np.percentile(level, 0.1))
+        prominence = min_prominence * amplitude
+        # Écart minimal pour parler de pic : jamais moins de noise_factor × le bruit de mesure,
+        # sinon le haut du bruit d'un palier réel serait raboté.
         margin = max(prominence, noise_factor * _noise_sigma(work))
+        if margin <= 0:
+            break
+        deviation = work - level
 
-        high, low = _saturated(work, ratio)
-        pos = _narrow(high, max_width) & (work - upper_env > prominence) & (work - level > margin)
-        neg = _narrow(low, max_width) & (lower_env - work > prominence) & (level - work > margin)
+        if saturation_only:
+            high, low = _saturated(work, ratio)
+            pos = _narrow(high, max_width) & (work - upper_env > prominence) & (deviation > margin)
+            neg = _narrow(low, max_width) & (lower_env - work > prominence) & (-deviation > margin)
+        else:
+            pos = _confirm_spikes(work, _narrow(deviation > margin, max_width), max_width, margin)
+            neg = _confirm_spikes(work, _narrow(-deviation > margin, max_width), max_width, margin)
         if not (pos.any() or neg.any()):
             break
         work[pos | neg] = level[pos | neg]
@@ -249,6 +268,25 @@ def _runs(mask: np.ndarray):
     return zip(edges[::2], edges[1::2])
 
 
+def _confirm_spikes(y: np.ndarray, mask: np.ndarray, width: int, margin: float) -> np.ndarray:
+    """Ne garde que les groupes qui s'écartent À LA FOIS des points juste avant et juste après,
+    dans le même sens. Un front de créneau ne s'écarte que d'un côté : il n'est jamais touché,
+    même si un pic voisin fausse la médiane locale."""
+    out = np.zeros_like(mask)
+    n = len(y)
+    for start, stop in _runs(mask):
+        left = y[max(0, start - width):start]
+        right = y[stop:min(n, stop + width)]
+        if not len(left) or not len(right):
+            continue  # au bord du fichier : pas assez de contexte
+        run = y[start:stop]
+        peak = run[np.argmax(np.abs(run - np.median(np.r_[left, right])))]
+        d_left, d_right = peak - np.median(left), peak - np.median(right)
+        if abs(d_left) > margin and abs(d_right) > margin and np.sign(d_left) == np.sign(d_right):
+            out[start:stop] = True
+    return out
+
+
 def _noise_sigma(y: np.ndarray) -> float:
     """Écart-type du bruit de mesure, estimé de façon robuste sur les différences successives
     (les fronts des créneaux et les pics sont trop rares pour fausser la médiane)."""
@@ -256,6 +294,12 @@ def _noise_sigma(y: np.ndarray) -> float:
     if len(d) == 0:
         return 0.0
     mad = float(np.median(np.abs(d - np.median(d))))
+    if mad == 0:
+        # Valeurs très quantifiées (ex. pas de 0,01, la plupart des points égaux à leur
+        # voisin) : le bruit vaut un pas de mesure. Si seuls les fronts varient, le signal
+        # est sans bruit (données de synthèse) : bruit nul.
+        steps = np.abs(d[d != 0])
+        return float(np.min(steps)) if len(steps) > 0.1 * len(d) else 0.0
     return 1.4826 * mad / np.sqrt(2.0)
 
 

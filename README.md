@@ -37,7 +37,7 @@ python main.py
 
 1. **Ouvrir des fichiers…** (essayer ceux du dossier `exemples/`).
 2. Cocher les voies à afficher.
-3. **Nettoyer…** : supprime les pics de saturation et met à 0 le bruit de repos. Une fenêtre
+3. **Nettoyer…** : supprime les pics parasites (quelle que soit leur hauteur) et met à 0 le bruit de repos. Une fenêtre
    montre, voie par voie, le seuil de bruit (réglable, avec une suggestion calculée sur les
    données) et le nombre de points modifiés **avant** d'appliquer. Bouton **?** / **Aide** :
    explications détaillées.
