@@ -28,6 +28,7 @@ def test_rest_offset_detected_and_removed():
     3 + np.random.default_rng(2).normal(0, 0.05, 5000),   # petit courant permanent
     channel_with_offset(0.0),                             # repos déjà à 0
     np.full(5000, -0.04) + np.random.default_rng(3).normal(0, 0.004, 5000),  # que du « repos » : ambigu
+    np.r_[np.full(300, 500.0), np.tile(np.r_[np.full(2000, 87.0), np.full(2000, 160.0)], 2)],  # palier bas + pics
 ])
 def test_no_offset_where_it_makes_no_sense(y):
     """Alimentation, petit courant permanent, repos déjà à 0 : rien à corriger."""

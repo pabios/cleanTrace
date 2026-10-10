@@ -17,6 +17,8 @@ exemples/
 exemples/autres_formats/
 * GL860_1s.CSV                  Graphtec GL860 — « , » et décimale « . », en-tête double
       (No.,Date&Time,ms,CH1… puis NO.,Time,ms,V,mA…,A1234567890), 1 s, 670 points.
+      Pics de saturation (pleine échelle ±, 1 à 3 points), parasites intermédiaires et
+      « +++++++ » sur les voies de puissance ; petits courants (CH4, CH11, CH13) propres.
 
 Usage : python exemples/generer_exemples.py
 """
@@ -186,10 +188,30 @@ def gl860():
     ]
     base = [28.1, 122.8, 48.87, 0.02, 125.54, 48.65, 123.98, 27.81, 3.0, 6.67]
     values = [b + 0.3 * abs(b) * cycles(t, 120.0) + rng.normal(0, 0.01 * abs(b) + 0.01, n) for b in base]
+    texts = [["{:+.2f}".format(x) for x in v] for v in values]
+
+    # Pics de saturation (parasites de commutation, CEM) sur les voies de puissance :
+    # pleine échelle positive ou négative, 1 à 3 points ; quelques hauteurs intermédiaires ;
+    # quelques « +++++++ » (hors échelle). Les petits courants (CH4, CH11, CH13) restent
+    # propres : le nettoyage ne doit pas les abîmer.
+    full_scale = {0: 50.0, 1: 500.0, 2: 200.0, 4: 500.0, 5: 200.0, 6: 500.0, 7: 50.0}
+    for col, fs in full_scale.items():
+        for pos in rng.choice(np.arange(5, n - 5), size=8, replace=False):
+            width = int(rng.integers(1, 4))
+            kind = rng.random()
+            for j in range(pos, pos + width):
+                if kind < 0.6:
+                    texts[col][j] = "{:+.2f}".format(fs * rng.uniform(0.985, 1.0))  # saturation +
+                elif kind < 0.8:
+                    texts[col][j] = "{:+.2f}".format(-fs * rng.uniform(0.985, 1.0))  # saturation -
+                else:
+                    texts[col][j] = "{:+.2f}".format(fs * rng.uniform(0.4, 0.7))  # parasite intermédiaire
+        texts[col][int(rng.integers(20, n - 20))] = "+++++++"  # hors échelle écrit par la centrale
+
     for k in range(n):
         lines.append(",".join(
             [str(k + 1), stamps[k].strftime("%Y/%m/%d %H:%M:%S"), "0"]
-            + ["{:+.2f}".format(v[k]) for v in values]
+            + [column[k] for column in texts]
             + ["LLLLLLLLLL"] * 3
         ))
     OTHER.mkdir(exist_ok=True)

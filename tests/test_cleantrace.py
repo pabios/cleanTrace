@@ -325,6 +325,18 @@ def test_spikes_of_any_height_removed_edges_untouched():
     assert np.sum(np.abs(old) > 0.5) > 20
 
 
+def test_burst_of_adjacent_spikes_removed_but_real_pulse_kept():
+    """Deux parasites accolés (6 points erratiques) : retirés. Une vraie impulsion de 7 points
+    (plateau régulier) : conservée."""
+    rng = np.random.default_rng(11)
+    y = 160 + rng.normal(0, 1.0, 600)
+    y[200:206] = [493, 499, 497, 305, 200, 279]  # rafale de parasites
+    y[400:407] = 260 + rng.normal(0, 1.0, 7)  # vraie impulsion courte et stable
+    out, n = remove_saturation_peaks(y)
+    assert np.all(out[200:206] < 170)
+    np.testing.assert_array_equal(out[400:407], y[400:407])
+
+
 def test_pure_noise_channel_untouched():
     """Voie sans signal (0,02 mA ± bruit) : rien n'est un pic."""
     rng = np.random.default_rng(4)
@@ -594,3 +606,30 @@ def test_write_extract_keeps_head_and_tail(tmp_path):
     assert text.startswith("Vendor,GRAPHTEC Corporation")
     assert "Number,Date,Time,us,CH3" in text  # début des données inclus
     assert "[...]" in text and out.stat().st_size < 20_000
+
+
+def test_gl860_example_saturation_spikes_cleaned():
+    """Exemple GL860 : pics de saturation (±pleine échelle), parasites intermédiaires et « +++++++ »
+    sur les voies de puissance. Tous retirés par défaut ; paliers et petits courants intacts."""
+    s = Session()
+    s.load_files([GL860])
+    name = GL860.name
+    data = s.measurements[name].data
+    power = ["Channel 1", "Channel 2", "Channel 3", "Channel 5", "Channel 6", "Channel 7", "Channel 8"]
+    small = ["Channel 4", "Channel 11", "Channel 13"]
+    raw = {label: data[label].to_numpy().copy() for label in power + small}
+    assert all(np.nanmax(np.abs(raw[label])) > 1.3 * np.nanpercentile(np.abs(raw[label]), 95) for label in power)
+    assert sum(np.isnan(raw[label]).sum() for label in power) == 7  # un « +++++++ » par voie
+
+    report = s.apply_cleaning([(name, label) for label in power + small], CleaningOptions())
+    assert report.peak_points >= 7 * 8  # au moins un point par pic (8 pics par voie)
+    for label in power:
+        cleaned = data[label].to_numpy()
+        assert not np.isnan(cleaned).any()  # hors échelle comblés
+        plateau = np.percentile(raw[label][np.isfinite(raw[label])], [5, 95])  # paliers bas et haut
+        margin = 0.1 * (plateau[1] - plateau[0])
+        assert cleaned.max() < plateau[1] + margin and cleaned.min() > plateau[0] - margin, label
+    for label in small:  # pas de pics : seulement lissées, niveau moyen conservé, jamais mises à 0
+        cleaned = data[label].to_numpy()
+        assert abs(np.mean(cleaned) - np.mean(raw[label])) < 0.01 * (abs(np.mean(raw[label])) + 0.01)
+        assert np.mean(cleaned == 0) < 0.5

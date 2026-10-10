@@ -179,8 +179,8 @@ class CleaningDialog(tk.Toplevel):
         self.btn_apply.pack(side=tk.RIGHT)
         ttk.Button(buttons, text=_("Annuler"), command=self.destroy).pack(side=tk.RIGHT, padx=6)
 
-        self.update_idletasks()
-        canvas.configure(width=table.winfo_reqwidth())
+        self._canvas, self._table = canvas, table
+        self._fit_width()
         self._update_states()
         self._analyse()
 
@@ -259,11 +259,17 @@ class CleaningDialog(tk.Toplevel):
                 else:
                     text, color = (_("non calculable") if rest else _("pas de repos à 0")), C["ring"]
                 self.suggestion_labels[key].configure(text=text, foreground=color)
+            self._fit_width()
             self.preview()
 
         self._run(work, done)
 
     # ------------------------------------------------------------------- actions
+
+    def _fit_width(self) -> None:
+        """Largeur du tableau ajustée à son contenu (qui change quand les calculs arrivent)."""
+        self.update_idletasks()
+        self._canvas.configure(width=self._table.winfo_reqwidth())
 
     def _changed(self) -> None:
         self._update_states()
@@ -342,6 +348,7 @@ class CleaningDialog(tk.Toplevel):
                 else:
                     text = _("{} mis à 0 ({:.0%})").format(report.noise_points, share)
                 zeros.config(text=text, foreground=C["destructive"] if share > 0.9 else C["fg"])
+            self._fit_width()
             self.progress_text.set(_("Aperçu à jour — rien n'est encore modifié. Cliquez sur « Appliquer »."))
 
         self._run(lambda progress: session.preview_cleaning(keys, options, thresholds, offsets, progress), done)

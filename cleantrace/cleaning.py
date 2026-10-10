@@ -139,7 +139,10 @@ def estimate_rest_offset(y) -> Optional[float]:
     if near.mean() < 0.2:
         return None  # pas de longues phases de repos
     rest = float(np.median(y[near]))
-    amplitude = float(max(abs(lo), abs(hi)))
+    # Amplitude utile sans les pics parasites (sinon un pic de 500 mA ferait passer un palier
+    # bas de 87 mA pour un « repos décalé »)
+    p5, p95 = np.percentile(y, [5, 95])
+    amplitude = float(max(abs(p5), abs(p95)))
     if abs(rest) >= 0.2 * amplitude or abs(rest) < 3 * sigma:
         return None
     return float("{:.3g}".format(rest))
@@ -296,8 +299,8 @@ def remove_saturation_peaks(
             pos = _narrow(high, max_width) & (work - upper_env > prominence) & (deviation > margin)
             neg = _narrow(low, max_width) & (lower_env - work > prominence) & (-deviation > margin)
         else:
-            pos = _confirm_spikes(work, _narrow(deviation > margin, max_width), max_width, margin)
-            neg = _confirm_spikes(work, _narrow(-deviation > margin, max_width), max_width, margin)
+            pos = _confirm_spikes(work, _spike_runs(deviation > margin, deviation, max_width), max_width, margin)
+            neg = _confirm_spikes(work, _spike_runs(-deviation > margin, deviation, max_width), max_width, margin)
         if not (pos.any() or neg.any()):
             break
         work[pos | neg] = level[pos | neg]
@@ -342,6 +345,23 @@ def _runs(mask: np.ndarray):
     padded = np.concatenate(([False], np.asarray(mask, dtype=bool), [False]))
     edges = np.flatnonzero(padded[1:] != padded[:-1])
     return zip(edges[::2], edges[1::2])
+
+
+def _spike_runs(mask: np.ndarray, deviation: np.ndarray, max_width: int) -> np.ndarray:
+    """Groupes candidats : étroits (≤ max_width points), ou rafales jusqu'à 2 × max_width points
+    si elles sont erratiques : parasites accolés dont les valeurs varient d'au moins 30 % de leur
+    hauteur au-dessus de la courbe. Un vrai phénomène court forme un plateau régulier (il varie
+    peu par rapport à sa hauteur) : il n'est pas pris pour une rafale."""
+    out = np.zeros_like(mask)
+    for start, stop in _runs(mask):
+        length = stop - start
+        if length <= max_width:
+            out[start:stop] = True
+        elif length <= 2 * max_width:
+            run = deviation[start:stop]
+            if np.ptp(run) > 0.3 * np.max(np.abs(run)):
+                out[start:stop] = True
+    return out
 
 
 def _confirm_spikes(y: np.ndarray, mask: np.ndarray, width: int, margin: float) -> np.ndarray:
