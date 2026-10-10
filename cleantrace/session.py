@@ -168,9 +168,9 @@ class Session:
             return self.noise_thresholds[key]
         if not self.has_rest_phase(key):
             return None
-        # Seuil calculé sur les données (bruit réel des repos) ; à défaut, celui de l'unité
-        suggestion = self.suggest_noise_threshold(key)
-        return suggestion if suggestion else default_noise_threshold(self.measurements[key[0]].channel(key[1]).unit)
+        # Seuil calculé sur les données (bruit réel des repos). Pas de seuil fixe de l'unité
+        # par défaut : 10 mA effaceraient entièrement un petit courant réel de 0,02 mA.
+        return self.suggest_noise_threshold(key)
 
     def has_rest_phase(self, key: Key) -> bool:
         return has_rest_phase(self.measurements[key[0]].data[key[1]].to_numpy(dtype=float))
@@ -237,10 +237,10 @@ class Session:
                 done.append(_("{} point(s) de pics parasites corrigés ({}, ≤ {} points)").format(
                     report.peak_points, _("saturation > {:.0%} du max").format(options.saturation_ratio)
                     if options.peak_mode == "saturation" else _("tous les pics étroits"), options.max_peak_width))
-            if options.remove_noise and options.noise_mode == "smooth":
+            if options.remove_noise:
                 done.append(_("bruit lissé sans changer le niveau (fenêtre {} points, fronts conservés)").format(
                     options.smooth_window))
-            elif options.remove_noise:
+            if options.zero_rest:
                 done.append(_("{} point(s) de bruit de repos mis à 0 (seuil {})").format(
                     report.noise_points, _("{:g} {}").format(threshold, ch.unit) if threshold else _("aucun")))
             self.log(_("Nettoyage {} [{}] : {}").format(label, name, " ; ".join(done) or _("rien")))

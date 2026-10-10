@@ -16,7 +16,7 @@ def channel_with_offset(offset, n=20000, seed=0):
 def test_rest_offset_detected_and_removed():
     y = channel_with_offset(-0.04)
     assert estimate_rest_offset(y) == pytest.approx(-0.04, abs=0.002)
-    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False, zero_offset=True, noise_mode="zero"),
+    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False, zero_offset=True, remove_noise=False, zero_rest=True),
                                offset=estimate_rest_offset(y))
     assert report.offset == pytest.approx(-0.04, abs=0.002)
     assert report.noise_points > 0.95 * 12000  # le repos (60 % des points) revient bien à 0
@@ -53,7 +53,7 @@ def session(tmp_path):
 
 def test_journal_traces_every_treatment(session, tmp_path):
     key = ("essai.csv", "I (A)")
-    session.apply_cleaning([key], CleaningOptions(zero_offset=True, noise_mode="zero"))
+    session.apply_cleaning([key], CleaningOptions(zero_offset=True, remove_noise=False, zero_rest=True))
     session.correct_point(key, 10)
     text = session.journal_text()
     assert "Fichier ouvert : essai.csv" in text

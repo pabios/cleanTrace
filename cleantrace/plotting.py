@@ -46,15 +46,8 @@ def format_hms(minutes: float, _pos=None) -> str:
 
 
 def format_axis_time(minutes: float, _pos=None) -> str:
-    """Graduation de l'axe X : « H:MM:SS », ou « 3 j 04:00 » au-delà de 48 h."""
-    if minutes is None or not math.isfinite(minutes):
-        return ""
-    if abs(minutes) < 48 * 60:
-        return format_hms(minutes)
-    total = int(round(minutes))
-    sign = "-" if total < 0 else ""
-    days, rest = divmod(abs(total), 1440)
-    return _("{}{} j {:02d}:{:02d}").format(sign, days, rest // 60, rest % 60)
+    """Graduation de l'axe X : toujours « H:MM:SS », même au-delà de 24 h (ex. « 48:00:00 »)."""
+    return format_hms(minutes)
 
 
 class TimeLocator(Locator):

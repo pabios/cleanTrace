@@ -44,13 +44,17 @@ Pics parasites (activé par défaut)
 
 Réduire le bruit (activé par défaut : LISSAGE)
   Le bruit est lissé morceau par morceau entre les fronts : un créneau reste vertical,
-  un palier garde sa valeur moyenne mesurée, une décharge garde sa forme. RIEN n'est
-  mis à 0 : un petit courant réel (même 5 mA) est conservé. « Lissage sur … points »
-  règle la force du lissage (plus de points = plus lisse).
-  Option « Forcer à 0 sous le seuil » (règle d'origine) : pendant les repos, les valeurs
-  sous le seuil de la voie sont mises à 0. Le seuil est calculé sur le bruit réel de
-  chaque voie (colonne « Suggestion »). En rouge : plus de 90 % de la voie serait mise
-  à 0 — c'est sans doute un vrai signal.
+  un palier garde sa valeur moyenne mesurée, une décharge garde sa forme. Le lissage
+  seul ne met rien à 0. « Lissage sur … points » règle sa force (plus de points = plus
+  lisse).
+
+Forcer les repos à 0 (option, cumulable avec le lissage)
+  Pendant les phases d'arrêt, les valeurs sous le seuil de la voie sont mises
+  exactement à 0 (après le lissage). Le seuil est calculé sur le bruit réel de chaque
+  voie, même si le repos est un peu décalé (ex. −0,04 A) : colonne « Suggestion »,
+  modifiable dans la colonne « Seuil ». Une voie qui ne revient jamais à 0 (tension
+  d'alimentation, petit courant permanent) n'est pas touchée. En rouge : plus de 90 %
+  de la voie serait mise à 0 — c'est sans doute un vrai signal.
 
 Décalage de zéro (option, désactivé par défaut)
   Si le repos d'une voie n'est pas exactement à 0 (ex. −0,04 A), ce niveau peut être
@@ -76,13 +80,17 @@ Spurious spikes (on by default)
 
 Reduce noise (on by default: SMOOTHING)
   Noise is smoothed piece by piece between edges: a square wave stays vertical, a
-  plateau keeps its measured mean value, a discharge keeps its shape. NOTHING is set to
-  0: a small real current (even 5 mA) is kept. “Smoothing over … points” sets the
-  strength (more points = smoother).
-  Option “Force to 0 below the threshold” (original rule): during rest phases, values
-  below the channel threshold are set to 0. The threshold is computed from each
-  channel's real noise (“Suggestion” column). In red: more than 90 % of the channel
-  would be set to 0 — it is probably a real signal.
+  plateau keeps its measured mean value, a discharge keeps its shape. Smoothing alone
+  sets nothing to 0. “Smoothing over … points” sets its strength (more points =
+  smoother).
+
+Force rest phases to 0 (optional, can be combined with smoothing)
+  During rest phases, values below the channel threshold are set exactly to 0 (after
+  smoothing). The threshold is computed from each channel's real noise, even when the
+  rest level is slightly offset (e.g. −0.04 A): “Suggestion” column, editable in the
+  “Threshold” column. A channel that never returns to 0 (supply voltage, small
+  permanent current) is left untouched. In red: more than 90 % of the channel would be
+  set to 0 — it is probably a real signal.
 
 Zero offset (optional, off by default)
   If a channel's rest level is not exactly 0 (e.g. −0.04 A), this level can be

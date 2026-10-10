@@ -23,10 +23,6 @@ PEAK_MODES = {
     "all": "Tous les pics étroits (recommandé)",
     "saturation": "Seulement la saturation, au-delà de",
 }
-NOISE_MODES = {
-    "smooth": "Lisser (garde le niveau mesuré, recommandé)",
-    "zero": "Forcer à 0 sous le seuil (phases de repos)",
-}
 
 
 def _fmt(value: Optional[float]) -> str:
@@ -88,11 +84,9 @@ class CleaningDialog(tk.Toplevel):
 
         ttk.Checkbutton(top, text=_("Réduire le bruit"), variable=app.chk_noise, style="Card.TCheckbutton",
                         command=self._changed).grid(row=2, column=0, sticky=tk.W, pady=(10, 0))
-        self.noise_mode = tk.StringVar(value=_(NOISE_MODES[app.noise_mode.get()]))
-        noise = ttk.Combobox(top, textvariable=self.noise_mode, values=[_(v) for v in NOISE_MODES.values()],
-                             state="readonly", width=44)
-        noise.grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=(26, 0), pady=(4, 0))
-        noise.bind("<<ComboboxSelected>>", lambda _e: self._changed())
+        ttk.Checkbutton(top, text=_("Forcer les repos à 0 sous le seuil de chaque voie (option)"),
+                        variable=app.chk_zero, style="Card.TCheckbutton", command=self._changed).grid(
+            row=3, column=0, columnspan=6, sticky=tk.W, pady=(10, 0))
         ttk.Label(top, text=_("lissage sur"), style="Card.TLabel").grid(row=2, column=1, padx=(12, 4), pady=(10, 0))
         self.smooth_window = tk.StringVar(value="11")
         self.smooth_box = ttk.Spinbox(top, from_=3, to=201, increment=2, width=4, textvariable=self.smooth_window)
@@ -153,7 +147,7 @@ class CleaningDialog(tk.Toplevel):
             hint.grid(row=row, column=4, sticky=tk.W, padx=6)
             self.suggestion_labels[key] = hint
             peaks = ttk.Label(table, text="…", width=7, anchor=tk.E, style="Card.TLabel")
-            zeros = ttk.Label(table, text="…", width=14, anchor=tk.E, style="Card.TLabel")
+            zeros = ttk.Label(table, text="…", width=24, anchor=tk.E, style="Card.TLabel")
             peaks.grid(row=row, column=5, sticky=tk.E, padx=6)
             zeros.grid(row=row, column=6, sticky=tk.E, padx=6)
             self.result_labels[key] = (peaks, zeros)
@@ -282,13 +276,9 @@ class CleaningDialog(tk.Toplevel):
                 widget.state(["!disabled"] if on else ["disabled"])
 
         enable([self.saturation_box], self.app.chk_peaks.get() and self.peak_mode.get() == _(PEAK_MODES["saturation"]))
-        zero = self._noise_mode() == "zero"
-        enable([self.smooth_box], self.app.chk_noise.get() and not zero)
-        enable(self.threshold_entries, self.app.chk_noise.get() and zero)
+        enable([self.smooth_box], self.app.chk_noise.get())
+        enable(self.threshold_entries, self.app.chk_zero.get())
         enable(self.offset_entries, self.app.chk_offset.get())
-
-    def _noise_mode(self) -> str:
-        return next((k for k, v in NOISE_MODES.items() if _(v) == self.noise_mode.get()), "smooth")
 
     def options(self) -> CleaningOptions:
         return CleaningOptions(
@@ -298,7 +288,7 @@ class CleaningDialog(tk.Toplevel):
             peak_mode="saturation" if self.peak_mode.get() == _(PEAK_MODES["saturation"]) else "all",
             saturation_ratio=float(self.saturation.get().replace(",", ".")) / 100.0,
             max_peak_width=int(self.width.get()),
-            noise_mode=self._noise_mode(),
+            zero_rest=self.app.chk_zero.get(),
             smooth_window=int(self.smooth_window.get()),
         )
 
@@ -341,12 +331,12 @@ class CleaningDialog(tk.Toplevel):
                 n = len(self.session.measurements[key[0]].data)
                 peaks.config(text=str(report.peak_points) if options.remove_peaks else "–")
                 share = report.noise_points / n if n else 0
-                if not options.remove_noise:
-                    text = "–"
-                elif options.noise_mode == "smooth":
-                    text = _("lissé") if report.smoothed_points else _("pas de bruit")
-                else:
-                    text = _("{} mis à 0 ({:.0%})").format(report.noise_points, share)
+                done = []
+                if options.remove_noise:
+                    done.append(_("lissé") if report.smoothed_points else _("pas de bruit"))
+                if options.zero_rest:
+                    done.append(_("{} mis à 0 ({:.0%})").format(report.noise_points, share))
+                text = " · ".join(done) or "–"
                 zeros.config(text=text, foreground=C["destructive"] if share > 0.9 else C["fg"])
             self._fit_width()
             self.progress_text.set(_("Aperçu à jour — rien n'est encore modifié. Cliquez sur « Appliquer »."))
@@ -359,8 +349,7 @@ class CleaningDialog(tk.Toplevel):
         except ValueError as exc:
             messagebox.showerror(_("Réglage invalide"), str(exc), parent=self)
             return
-        self.app.noise_mode.set(options.noise_mode)
-        if not (options.remove_noise or options.remove_peaks or options.zero_offset):
+        if not (options.remove_noise or options.zero_rest or options.remove_peaks or options.zero_offset):
             messagebox.showinfo(_("Nettoyage"), _("Activez au moins un traitement."), parent=self)
             return
         self._job += 1  # un éventuel calcul en cours est abandonné

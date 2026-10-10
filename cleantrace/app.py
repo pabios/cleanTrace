@@ -88,7 +88,7 @@ class CleanTraceApp:
         if self.busy or language == get_language():
             return
         state = {name: getattr(self, name).get() for name in
-                 ("chk_noise", "chk_peaks", "chk_offset", "chk_show_raw", "chk_click_edit", "noise_mode")}
+                 ("chk_noise", "chk_peaks", "chk_offset", "chk_show_raw", "chk_click_edit", "chk_zero")}
         offset = self.session.time_offset_min
         set_language(language)
         for widget in self.root.winfo_children():
@@ -192,10 +192,12 @@ class CleanTraceApp:
         self.chk_peaks = tk.BooleanVar(value=True)
         self.chk_offset = tk.BooleanVar(value=False)  # option : ne jamais décaler de vraies mesures par défaut
         self.chk_show_raw = tk.BooleanVar(value=True)
-        self.noise_mode = tk.StringVar(value="smooth")  # "smooth" (lisser) ou "zero" (forcer à 0)
+        self.chk_zero = tk.BooleanVar(value=False)  # option : repos forcés à 0 (cumulable avec le lissage)
         ttk.Checkbutton(clean, text=_("Supprimer les pics parasites"), variable=self.chk_peaks,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
         ttk.Checkbutton(clean, text=_("Réduire le bruit (lissage, garde le niveau)"), variable=self.chk_noise,
+                        style="Card.TCheckbutton").pack(anchor=tk.W)
+        ttk.Checkbutton(clean, text=_("Forcer les repos à 0 (option)"), variable=self.chk_zero,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
         ttk.Checkbutton(clean, text=_("Corriger le décalage de zéro (option)"), variable=self.chk_offset,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
@@ -406,9 +408,9 @@ class CleanTraceApp:
             parts = [_("{} voie(s) nettoyée(s)").format(len(keys))]
             if options.remove_peaks:
                 parts.append(_("{} point(s) de pics corrigés").format(_thousands(report.peak_points)))
-            if options.remove_noise and options.noise_mode == "smooth":
+            if options.remove_noise:
                 parts.append(_("bruit lissé (niveaux conservés)"))
-            elif options.remove_noise:
+            if options.zero_rest:
                 parts.append(_("{} point(s) de bruit mis à 0").format(_thousands(report.noise_points)))
             if self.chk_show_raw.get():
                 parts.append(_("données brutes en gris pour comparer"))

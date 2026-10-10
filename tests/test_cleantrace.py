@@ -351,12 +351,12 @@ def test_noise_threshold_suggestion():
     y = np.r_[np.full(500, 5.0), np.zeros(500), np.full(500, -5.0)] + rng.normal(0, 0.015, 1500)
     s = suggest_noise_threshold(y)
     assert 0.03 < s < 0.1  # bruit ±30-45 mA -> seuil ~50-70 mA (le seuil fixe de 10 mA était trop bas)
-    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False, noise_mode="zero"), noise_threshold=s)
+    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False, remove_noise=False, zero_rest=True), noise_threshold=s)
     assert report.noise_points >= 495 and (out[500:1000] == 0).mean() > 0.99
     # petit courant permanent : aucune suggestion, et seuil vide = rien d'effacé
     small = 3.0 + rng.normal(0, 0.05, 670)
     assert suggest_noise_threshold(small) is None
-    out, report = clean_signal(small, "mA", CleaningOptions(remove_peaks=False, noise_mode="zero"),
+    out, report = clean_signal(small, "mA", CleaningOptions(remove_peaks=False, remove_noise=False, zero_rest=True),
                                noise_threshold=None)
     assert report.noise_points == 0
 
@@ -367,7 +367,7 @@ def test_session_thresholds_preview_and_apply():
     key = (GL860.name, "Channel 11")
     before = s.measurements[key[0]].data[key[1]].copy()
     assert s.noise_threshold(key) is None  # 2 à 4 mA permanents : pas de mise à 0 par défaut
-    zero = CleaningOptions(noise_mode="zero")
+    zero = CleaningOptions(remove_noise=False, zero_rest=True)
     assert s.preview_cleaning([key], zero)[key].noise_points == 0
     # seuil imposé à 10 mA : l'aperçu montre que tout serait effacé, sans rien modifier
     assert s.preview_cleaning([key], zero, {key: 10.0})[key].noise_points == len(before)
@@ -392,7 +392,7 @@ def test_cycle_extremes_preserved_with_noise():
     rng = np.random.default_rng(0)
     y = square_wave() + rng.normal(0, 0.003, 500)
     y[120] = 5.0
-    out, _ = clean_signal(y, "A", CleaningOptions(noise_mode="zero"))  # règle d'origine (forcer à 0)
+    out, _ = clean_signal(y, "A", CleaningOptions(remove_noise=False, zero_rest=True))  # règle d'origine (forcer à 0)
     # max initial du cycle (palier de charge) et min final (palier de décharge) inchangés
     assert out[100:200].max() == pytest.approx(y[100:200][np.arange(100) != 20].max())
     assert out[300:400].min() == pytest.approx(y[300:400].min())
@@ -497,9 +497,10 @@ def test_time_axis_ticks_stay_readable():
 
     ticks = TimeLocator().tick_values(0, 140_000)  # ~97 jours (deux essais très éloignés)
     assert 2 <= len(ticks) <= 9
-    assert format_axis_time(ticks[1]) == "14 j 00:00"
+    assert format_axis_time(ticks[1]) == "336:00:00"
     assert list(TimeLocator().tick_values(0, 40)) == [0, 5, 10, 15, 20, 25, 30, 35, 40]
     assert format_axis_time(90) == "1:30:00"
+    assert format_axis_time(48 * 60) == "48:00:00"  # pas de « 2 j » : H:MM:SS demandé par le client
 
 
 def test_interpolation_formula():
@@ -633,3 +634,38 @@ def test_gl860_example_saturation_spikes_cleaned():
         cleaned = data[label].to_numpy()
         assert abs(np.mean(cleaned) - np.mean(raw[label])) < 0.01 * (abs(np.mean(raw[label])) + 0.01)
         assert np.mean(cleaned == 0) < 0.5
+
+
+def _rest_square(rest, amp, noise, spikes=0.0, seed=1):
+    rng = np.random.default_rng(seed)
+    y = np.tile(np.r_[np.full(300, rest), np.full(300, amp)], 10) + rng.normal(0, noise, 6000)
+    if spikes:
+        y[rng.choice(6000, 30, replace=False)] = spikes
+    return y
+
+
+@pytest.mark.parametrize("rest, spikes", [(-0.04, 0.0), (-0.04, 10.0), (0.0, 10.0), (0.03, 0.0)])
+def test_zero_rest_works_with_offset_rest_and_spikes(rest, spikes):
+    """Retour client v0.8.1 : « Forcer à 0 » ne changeait rien (repos à −0,04 A non reconnu)
+    ou mettait tout à 0 (seuil faussé par un pic de saturation à 10 A)."""
+    from cleantrace.cleaning import has_rest_phase, suggest_noise_threshold
+
+    y = _rest_square(rest, 0.5, 0.005, spikes)
+    assert has_rest_phase(y)
+    threshold = suggest_noise_threshold(y)
+    assert abs(rest) < threshold < 0.25
+    options = CleaningOptions(remove_noise=True, zero_rest=True)  # lisser ET forcer à 0
+    out, report = clean_signal(y, "A", options, noise_threshold=threshold)
+    phases = out.reshape(10, 2, 300)
+    assert (phases[:, 0, 5:-5] == 0).all()  # repos exactement à 0
+    assert abs(np.median(phases[:, 1, :]) - 0.5) < 0.01  # paliers intacts
+    assert out.max() < 0.6  # pics retirés
+    assert report.smoothed_points and report.noise_points >= 2900
+
+
+def test_zero_rest_off_by_default_and_never_on_permanent_signal():
+    from cleantrace.cleaning import has_rest_phase
+
+    assert not CleaningOptions().zero_rest
+    supply = 24 + np.random.default_rng(0).normal(0, 0.02, 5000)
+    assert not has_rest_phase(supply)

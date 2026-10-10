@@ -3,9 +3,9 @@
 Règles métier :
 
 1. **Bruit** (``chk_noise``) : par défaut, le bruit est LISSÉ morceau par morceau entre
-   les fronts (``smooth_preserving_edges``) : le vrai niveau mesuré est conservé, rien
-   n'est mis à 0. En option (mode « zero », règle d'origine du cahier des charges) :
-   pendant les phases d'arrêt, tout signal sous le seuil est forcé à 0.0.
+   les fronts (``smooth_preserving_edges``) : le vrai niveau mesuré est conservé.
+   **Repos à 0** (``chk_zero``, option cumulable avec le lissage, règle d'origine du cahier
+   des charges) : pendant les phases d'arrêt, tout signal sous le seuil est forcé à 0.0.
 2. **Pics parasites** (``chk_peaks``) : les groupes d'échantillons étroits (5 points au
    plus) qui s'écartent du niveau local de la courbe (médiane glissante) de beaucoup plus
    que le bruit de mesure sont remplacés par ce niveau local, puis lissés par
@@ -43,8 +43,8 @@ NOISE_THRESHOLDS = {
 @dataclass
 class CleaningOptions:
     zero_offset: bool = False  # soustraire le décalage de zéro mesuré au repos (option)
-    remove_noise: bool = True  # chk_noise : traiter le bruit
-    noise_mode: str = "smooth"  # "smooth" : lisser en gardant le vrai niveau ; "zero" : forcer à 0 sous le seuil
+    remove_noise: bool = True  # chk_noise : lisser le bruit en gardant le vrai niveau
+    zero_rest: bool = False  # chk_zero : forcer à 0 les phases de repos sous le seuil (cumulable)
     smooth_window: int = 11  # largeur du lissage (points)
     remove_peaks: bool = True  # chk_peaks
     peak_mode: str = "all"  # "all" : tous les pics étroits ; "saturation" : seulement > saturation_ratio × max
@@ -58,10 +58,10 @@ class CleaningOptions:
 
 @dataclass
 class CleaningReport:
-    noise_points: int = 0  # points mis à 0 (mode « forcer à 0 »)
+    noise_points: int = 0  # points mis à 0 (option « forcer les repos à 0 »)
     peak_points: int = 0
     offset: float = 0.0  # décalage de zéro soustrait
-    smoothed_points: int = 0  # points lissés (mode « lisser »)
+    smoothed_points: int = 0  # points lissés
 
     @property
     def total(self) -> int:
@@ -77,17 +77,31 @@ def default_noise_threshold(unit: str) -> Optional[float]:
 
 
 def _rest_values(y, min_rest_fraction: float = 0.02) -> Optional[np.ndarray]:
-    """|valeurs| des points « au repos » (à moins de 5 % de l'amplitude autour de 0),
-    ou None si la voie ne revient pas (assez) à 0."""
+    """|valeurs| des points « au repos », ou None si la voie ne revient pas (assez) à 0.
+
+    Repos = points à moins de 5 % de l'amplitude autour de 0, plus le groupe de valeurs le
+    plus fréquent près de 0 (moins de 20 % de l'amplitude) : un repos décalé (ex. −0,04 A
+    sur une voie de 0,5 A) ou très bruité est ainsi reconnu. L'amplitude est calculée sans
+    les pics parasites (percentiles 5-95), qui la fausseraient (pic de saturation à 10 A).
+    """
     y = np.asarray(y, dtype=float)
     y = y[np.isfinite(y)]
     if len(y) < 10:
         return None
-    amplitude = float(np.max(np.abs(y)))
+    lo, hi = np.percentile(y, [5, 95])
+    amplitude = float(max(abs(lo), abs(hi)))
     if amplitude == 0:
         return None
-    rest = np.abs(y[np.abs(y) < 0.05 * amplitude])
-    return rest if len(rest) >= min_rest_fraction * len(y) else None
+    rest = np.abs(y) < 0.05 * amplitude
+    low = y[np.abs(y) < 0.2 * amplitude]
+    if len(low) >= min_rest_fraction * len(y) and np.ptp(low) > 0:
+        counts, edges = np.histogram(low, bins=200)
+        k = int(np.argmax(counts))
+        level = 0.5 * (edges[k] + edges[k + 1])
+        sigma = max(_noise_sigma(y), edges[1] - edges[0])
+        rest |= (np.abs(y - level) < 4 * sigma) & (np.abs(y) < 0.2 * amplitude)
+    values = np.abs(y[rest])
+    return values if len(values) >= min_rest_fraction * len(y) else None
 
 
 def has_rest_phase(y) -> bool:
@@ -98,8 +112,7 @@ def has_rest_phase(y) -> bool:
 def suggest_noise_threshold(y, min_rest_fraction: float = 0.02) -> Optional[float]:
     """Seuil proposé d'après les données : 1,5 × le bruit mesuré pendant les repos à 0.
 
-    Les points « au repos » sont ceux à moins de 5 % de l'amplitude de la voie autour
-    de 0. S'il y en a trop peu (voie qui ne revient jamais à 0, petit courant permanent),
+    Les points « au repos » sont décrits dans ``_rest_values``. S'il y en a trop peu (voie qui ne revient jamais à 0, petit courant permanent),
     aucun seuil n'est proposé : mettre à 0 détruirait de vraies mesures.
     """
     rest = _rest_values(y, min_rest_fraction)
@@ -154,7 +167,7 @@ def clean_signal(
 ) -> Tuple[np.ndarray, CleaningReport]:
     """Applique les traitements activés à un signal. Renvoie (signal nettoyé, rapport).
 
-    Ordre : décalage de zéro (``offset`` soustrait), pics parasites, bruit de repos.
+    Ordre : décalage de zéro (``offset`` soustrait), pics parasites, lissage, repos à 0.
     ``noise_threshold`` : seuil de bruit de repos de cette voie (dans son unité). Par
     défaut, celui de l'unité (``NOISE_THRESHOLDS``) ; None : pas de mise à 0.
     """
@@ -175,9 +188,10 @@ def clean_signal(
             noise_factor=options.noise_factor,
             saturation_only=options.peak_mode == "saturation",
         )
-    if options.remove_noise and options.noise_mode == "smooth":
+    if options.remove_noise:
         out, report.smoothed_points = smooth_preserving_edges(out, options.smooth_window)
-    elif options.remove_noise:
+    # Repos à 0 en dernier : les zéros restent exacts (le lissage ne les déplace plus).
+    if options.zero_rest:
         threshold = default_noise_threshold(unit) if noise_threshold is _DEFAULT else noise_threshold
         if threshold:
             out, report.noise_points = zero_rest_noise(

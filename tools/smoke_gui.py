@@ -90,10 +90,20 @@ def main():
     dialog = gui.clean_selected()
     wait_dialog(dialog)
     shot_window(dialog, "3a_fenetre_nettoyage.png")
+    # Lisser ET forcer les repos à 0 (option cumulable, retour client v0.8.1)
+    gui.chk_zero.set(True)
+    dialog._changed()
+    wait_dialog(dialog)
+    bruit = dialog.result_labels[shunt][1].cget("text")
+    assert "lissé" in bruit and "mis à 0" in bruit and not bruit.startswith("0 "), bruit
+    shot_window(dialog, "3a_fenetre_nettoyage_zero.png")
     dialog.apply()
     wait_idle(root, gui)
     print("état :", gui.status.get())
+    y = gui.session.measurements[shunt[0]].data[shunt[1]].to_numpy()
+    assert (y == 0).sum() > 1000, "repos non mis à 0"
     shot(root, "3_shunt_nettoye.png")
+    gui.chk_zero.set(False)
 
     # Livrables : image du graphique et rapport PDF
     app_module.filedialog.asksaveasfilename = lambda **k: str(OUT / "graphique.png")

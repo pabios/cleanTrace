@@ -27,6 +27,7 @@ EN = {
     "Supprimer les pics parasites": "Remove spurious spikes",
     "Réduire le bruit (lissage, garde le niveau)": "Reduce noise (smoothing, keeps the level)",
     "Corriger le décalage de zéro (option)": "Correct the zero offset (optional)",
+    "Forcer les repos à 0 (option)": "Force rest phases to 0 (optional)",
     "Montrer les données brutes (en gris)": "Show raw data (in grey)",
     "Nettoyer…": "Clean…",
     "Annuler le nettoyage": "Undo cleaning",
@@ -114,8 +115,7 @@ EN = {
     "Grille du fichier de référence": "Reference file grid",
     "Tous les pics étroits (recommandé)": "All narrow spikes (recommended)",
     "Seulement la saturation, au-delà de": "Saturation only, above",
-    "Lisser (garde le niveau mesuré, recommandé)": "Smooth (keeps the measured level, recommended)",
-    "Forcer à 0 sous le seuil (phases de repos)": "Force to 0 below the threshold (rest phases)",
+    "Forcer les repos à 0 sous le seuil de chaque voie (option)": "Force rest phases to 0 below each channel's threshold (optional)",
     # --- fenêtre de nettoyage
     "Nettoyage de {} voie(s)": "Cleaning {} channel(s)",
     "Réglez les traitements, vérifiez l'aperçu, puis appliquez. Tout est noté dans le journal des traitements.":
@@ -164,7 +164,6 @@ EN = {
     "Humidité (%HR)": "Humidity (%RH)",
     "Temps (H:MM:SS)": "Time (H:MM:SS)",
     "Avancement (% de la durée de chaque fichier)": "Progress (% of each file's duration)",
-    "{}{} j {:02d}:{:02d}": "{}{} d {:02d}:{:02d}",
     # --- rapport
     "Rapport de traitement des mesures": "Measurement processing report",
     "Synthèse : fichiers sources, base de temps et statistiques des voies retenues":
