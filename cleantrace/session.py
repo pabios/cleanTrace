@@ -286,7 +286,6 @@ class Session:
 
     def series(self, keys: Sequence[Key], with_raw: bool = False) -> List[PlotSeries]:
         """Courbes à tracer. ``with_raw`` : ajoute, sous chaque voie modifiée, ses données brutes."""
-        several_files = len({name for name, _label in keys}) > 1
         out = []
         for i, (name, label) in enumerate(keys):
             m = self.measurements[name]
@@ -301,7 +300,7 @@ class Session:
             out.append(
                 PlotSeries(
                     gid=str(i),
-                    label="{} — {}".format(label, name) if several_files else label,
+                    label=label,  # légende : « Channel 4 » seul, sans le nom du fichier (demande client)
                     x=x,
                     y=y,
                     unit=ch.unit,

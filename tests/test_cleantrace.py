@@ -574,9 +574,9 @@ def test_session_end_to_end(tmp_path):
     np.testing.assert_array_equal(s.measurements[shunt[0]].data[shunt[1]].to_numpy(), raw)
 
     # seul le fichier de l'enceinte suit le curseur de décalage
-    shiftable = {sr.label: sr.shiftable for sr in s.series(keys)}
-    assert shiftable["Channel 2 — nanodac_Rd_Z.txt"]
-    assert not any(v for k, v in shiftable.items() if k.endswith(GL980))
+    shiftable = {sr.key: sr.shiftable for sr in s.series(keys)}
+    assert shiftable[("nanodac_Rd_Z.txt", "Channel 2")]
+    assert not any(v for k, v in shiftable.items() if k[0] == GL980)
 
     s.time_offset_min = -4
     out = tmp_path / "export.csv"
@@ -729,3 +729,11 @@ def test_report_uses_plot_settings(tmp_path):
                        PlotSettings(title="Mon essai", x=AxisSettings(min=5, max=10)))
     assert fig.axes[0].get_xlim() == (5, 10)
     assert fig.axes[0].get_title(loc="left") == "Mon essai"
+
+
+def test_legend_shows_channel_only_with_several_files():
+    """Demande client : légende « Channel 4 », jamais le nom du fichier."""
+    s = Session()
+    s.load_files([str(EXAMPLES / "GL980_Mes-_260601-170139.CSV"), str(EXAMPLES / "nanodac_Rd_Z.txt")])
+    keys = [(m.name, m.channels[0].label) for m in s.measurements.values()]
+    assert [p.label for p in s.series(keys)] == [k[1] for k in keys]
