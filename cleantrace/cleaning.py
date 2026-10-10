@@ -2,8 +2,10 @@
 
 Règles métier :
 
-1. **Bruit de repos** (``chk_noise``) : pendant les phases d'arrêt, tout signal sous le
-   seuil physique (< 10 mA, < 5 mV...) est forcé à 0.0.
+1. **Bruit** (``chk_noise``) : par défaut, le bruit est LISSÉ morceau par morceau entre
+   les fronts (``smooth_preserving_edges``) : le vrai niveau mesuré est conservé, rien
+   n'est mis à 0. En option (mode « zero », règle d'origine du cahier des charges) :
+   pendant les phases d'arrêt, tout signal sous le seuil est forcé à 0.0.
 2. **Pics parasites** (``chk_peaks``) : les groupes d'échantillons étroits (5 points au
    plus) qui s'écartent du niveau local de la courbe (médiane glissante) de beaucoup plus
    que le bruit de mesure sont remplacés par ce niveau local, puis lissés par
@@ -40,8 +42,10 @@ NOISE_THRESHOLDS = {
 
 @dataclass
 class CleaningOptions:
-    zero_offset: bool = True  # soustraire le décalage de zéro mesuré au repos
-    remove_noise: bool = True  # chk_noise
+    zero_offset: bool = False  # soustraire le décalage de zéro mesuré au repos (option)
+    remove_noise: bool = True  # chk_noise : traiter le bruit
+    noise_mode: str = "smooth"  # "smooth" : lisser en gardant le vrai niveau ; "zero" : forcer à 0 sous le seuil
+    smooth_window: int = 11  # largeur du lissage (points)
     remove_peaks: bool = True  # chk_peaks
     peak_mode: str = "all"  # "all" : tous les pics étroits ; "saturation" : seulement > saturation_ratio × max
     saturation_ratio: float = 0.98  # seuil "proche du plafond" (fraction du max)
@@ -54,9 +58,10 @@ class CleaningOptions:
 
 @dataclass
 class CleaningReport:
-    noise_points: int = 0
+    noise_points: int = 0  # points mis à 0 (mode « forcer à 0 »)
     peak_points: int = 0
     offset: float = 0.0  # décalage de zéro soustrait
+    smoothed_points: int = 0  # points lissés (mode « lisser »)
 
     @property
     def total(self) -> int:
@@ -167,13 +172,47 @@ def clean_signal(
             noise_factor=options.noise_factor,
             saturation_only=options.peak_mode == "saturation",
         )
-    if options.remove_noise:
+    if options.remove_noise and options.noise_mode == "smooth":
+        out, report.smoothed_points = smooth_preserving_edges(out, options.smooth_window)
+    elif options.remove_noise:
         threshold = default_noise_threshold(unit) if noise_threshold is _DEFAULT else noise_threshold
         if threshold:
             out, report.noise_points = zero_rest_noise(
                 out, unit, threshold=threshold, min_samples=options.min_rest_samples
             )
     return out, report
+
+
+def smooth_preserving_edges(y, window: int = 11, edge_factor: float = 6.0) -> Tuple[np.ndarray, int]:
+    """Lisse le bruit sans toucher aux fronts ni au niveau réel du signal.
+
+    Le signal est découpé aux fronts (créneaux, débuts de décharge : sauts du niveau local
+    nettement plus grands que le bruit), puis chaque morceau est lissé séparément
+    (filtre gaussien). Un créneau reste donc vertical, un palier garde sa valeur moyenne,
+    une décharge exponentielle garde sa forme ; seul le bruit diminue. Rien n'est mis à 0.
+    Renvoie (signal lissé, nombre de points modifiés).
+    """
+    out = np.asarray(y, dtype=float).copy()
+    finite = np.isfinite(out)
+    if finite.sum() < 3 or window < 3:
+        return out, 0
+    work = _fill_nan(out, finite)
+    sigma = _noise_sigma(work)
+    if sigma == 0:
+        return out, 0  # pas de bruit
+    window = int(window) | 1  # impair
+    level = median_filter(work, size=window, mode="nearest")
+    # Fronts : saut du niveau local entre deux points consécutifs bien au-delà du bruit
+    jumps = np.flatnonzero(np.abs(np.diff(level)) > edge_factor * sigma)
+    bounds = np.concatenate(([0], jumps + 1, [len(work)]))
+    smoothed = np.empty_like(work)
+    gaussian_sigma = window / 4.0
+    for start, stop in zip(bounds[:-1], bounds[1:]):
+        segment = work[start:stop]
+        smoothed[start:stop] = gaussian_filter1d(segment, gaussian_sigma, mode="nearest") if len(segment) > 2 else segment
+    smoothed[~finite] = np.nan
+    changed = int(np.sum(finite & (smoothed != out)))
+    return smoothed, changed
 
 
 def zero_rest_noise(

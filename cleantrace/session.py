@@ -19,6 +19,7 @@ from .editing import interpolate_at
 from .export import Key, merge_selection, write_csv
 from .loader import TIME_COL, LoadError, Measurement, align_time_axes, load_measurement
 from .plotting import PlotSeries
+from .i18n import _
 
 
 # Bases de temps pour superposer plusieurs fichiers
@@ -61,8 +62,8 @@ class Session:
     def journal_text(self) -> str:
         from . import __version__
 
-        lines = ["Journal des traitements — CleanTrace v{}".format(__version__),
-                 "Édité le {}".format(pd.Timestamp.now().strftime("%d/%m/%Y %H:%M")), ""]
+        lines = [_("Journal des traitements — CleanTrace v{}").format(__version__),
+                 _("Édité le {}").format(pd.Timestamp.now().strftime("%d/%m/%Y %H:%M")), ""]
         lines += ["{}  {}".format(t.strftime("%d/%m/%Y %H:%M:%S"), text) for t, text in self.journal]
         return "\n".join(lines) + "\n"
 
@@ -89,7 +90,7 @@ class Session:
         for i, path in enumerate(paths, start=1):
             name = _unique_name(Path(path).name, taken)
             taken.add(name)
-            prefix = "Fichier {}/{} — ".format(i, len(paths)) if len(paths) > 1 else ""
+            prefix = _("Fichier {}/{} — ").format(i, len(paths)) if len(paths) > 1 else ""
             report = (lambda msg, p=prefix: progress(p + msg)) if progress else None
             try:
                 loaded.append(load_measurement(path, name=name, progress=report))
@@ -102,9 +103,9 @@ class Session:
             self.measurements[m.name] = m
             self._raw[m.name] = m.data.copy()
             end = m.start + pd.Timedelta(minutes=m.duration_min) if m.start is not None else None
-            self.log("Fichier ouvert : {} — {} · {} · {} points{} · voies : {}".format(
+            self.log(_("Fichier ouvert : {} — {} · {} · {} points{} · voies : {}").format(
                 m.name, m.source, m.period_label, len(m.data),
-                " · du {} au {}".format(m.start.strftime("%d/%m/%Y %H:%M:%S"), end.strftime("%d/%m/%Y %H:%M:%S"))
+                _(" · du {} au {}").format(m.start.strftime("%d/%m/%Y %H:%M:%S"), end.strftime("%d/%m/%Y %H:%M:%S"))
                 if end is not None else "",
                 ", ".join(ch.label for ch in m.channels)))
         self._realign()
@@ -130,7 +131,7 @@ class Session:
             raise ValueError(mode)
         self.time_mode = mode
         self._realign()
-        self.log("Base de temps : {}".format(TIME_MODES[mode]))
+        self.log(_("Base de temps : {}").format(_(TIME_MODES[mode])))
 
     @property
     def percent_axis(self) -> bool:
@@ -167,7 +168,9 @@ class Session:
             return self.noise_thresholds[key]
         if not self.has_rest_phase(key):
             return None
-        return default_noise_threshold(self.measurements[key[0]].channel(key[1]).unit)
+        # Seuil calculé sur les données (bruit réel des repos) ; à défaut, celui de l'unité
+        suggestion = self.suggest_noise_threshold(key)
+        return suggestion if suggestion else default_noise_threshold(self.measurements[key[0]].channel(key[1]).unit)
 
     def has_rest_phase(self, key: Key) -> bool:
         return has_rest_phase(self.measurements[key[0]].data[key[1]].to_numpy(dtype=float))
@@ -194,11 +197,11 @@ class Session:
         out = {}
         for i, key in enumerate(keys):
             if progress:
-                progress("Aperçu — voie {}/{} : {}".format(i + 1, len(keys), key[1]), i / len(keys))
+                progress(_("Aperçu — voie {}/{} : {}").format(i + 1, len(keys), key[1]), i / len(keys))
             m = self.measurements[key[0]]
             threshold = (thresholds or {}).get(key, self.noise_threshold(key))
             offset = (offsets or {}).get(key, self.zero_offset(key))
-            _, out[key] = clean_signal(m.data[key[1]].to_numpy(dtype=float), m.channel(key[1]).unit,
+            _cleaned, out[key] = clean_signal(m.data[key[1]].to_numpy(dtype=float), m.channel(key[1]).unit,
                                        options, noise_threshold=threshold, offset=offset)
         return out
 
@@ -217,7 +220,7 @@ class Session:
         for i, key in enumerate(keys):
             name, label = key
             if progress:
-                progress("Nettoyage — voie {}/{} : {}".format(i + 1, len(keys), label), i / len(keys))
+                progress(_("Nettoyage — voie {}/{} : {}").format(i + 1, len(keys), label), i / len(keys))
             m = self.measurements[name]
             ch = m.channel(label)
             threshold, offset = self.noise_threshold(key), self.zero_offset(key)
@@ -226,24 +229,28 @@ class Session:
             m.data[label] = cleaned
             total.noise_points += report.noise_points
             total.peak_points += report.peak_points
+            total.smoothed_points += report.smoothed_points
             done = []
             if report.offset:
-                done.append("décalage de zéro {:+.4g} {} soustrait".format(report.offset, ch.unit))
+                done.append(_("décalage de zéro {:+.4g} {} soustrait").format(report.offset, ch.unit))
             if options.remove_peaks:
-                done.append("{} point(s) de pics parasites corrigés ({}, ≤ {} points)".format(
-                    report.peak_points, "saturation > {:.0%} du max".format(options.saturation_ratio)
-                    if options.peak_mode == "saturation" else "tous les pics étroits", options.max_peak_width))
-            if options.remove_noise:
-                done.append("{} point(s) de bruit de repos mis à 0 (seuil {})".format(
-                    report.noise_points, "{:g} {}".format(threshold, ch.unit) if threshold else "aucun"))
-            self.log("Nettoyage {} [{}] : {}".format(label, name, " ; ".join(done) or "rien"))
+                done.append(_("{} point(s) de pics parasites corrigés ({}, ≤ {} points)").format(
+                    report.peak_points, _("saturation > {:.0%} du max").format(options.saturation_ratio)
+                    if options.peak_mode == "saturation" else _("tous les pics étroits"), options.max_peak_width))
+            if options.remove_noise and options.noise_mode == "smooth":
+                done.append(_("bruit lissé sans changer le niveau (fenêtre {} points, fronts conservés)").format(
+                    options.smooth_window))
+            elif options.remove_noise:
+                done.append(_("{} point(s) de bruit de repos mis à 0 (seuil {})").format(
+                    report.noise_points, _("{:g} {}").format(threshold, ch.unit) if threshold else _("aucun")))
+            self.log(_("Nettoyage {} [{}] : {}").format(label, name, " ; ".join(done) or _("rien")))
         return total
 
     def restore_raw(self, keys: Sequence[Key]) -> None:
         """Annule nettoyages et corrections des voies données."""
         for name, label in keys:
             self.measurements[name].data[label] = self._raw[name][label].to_numpy(copy=True)
-            self.log("Données brutes restaurées : {} [{}]".format(label, name))
+            self.log(_("Données brutes restaurées : {} [{}]").format(label, name))
 
     def modified_points(self, key: Key) -> int:
         """Nombre de points qui diffèrent des données brutes (nettoyage + corrections)."""
@@ -265,7 +272,7 @@ class Session:
         m = self.measurements[name]
         when = (m.start + pd.Timedelta(minutes=float(m.elapsed_min[index]))).strftime("%d/%m/%Y %H:%M:%S.%f")[:-5] \
             if m.start is not None else format_hms_safe(float(m.elapsed_min[index]))
-        self.log("Correction au clic : {} [{}] point n°{} ({}) : {:.6g} -> {:.6g}".format(
+        self.log(_("Correction au clic : {} [{}] point n°{} ({}) : {:.6g} -> {:.6g}").format(
             label, name, index + 1, when, old, value))
         return value
 
@@ -279,7 +286,7 @@ class Session:
 
     def series(self, keys: Sequence[Key], with_raw: bool = False) -> List[PlotSeries]:
         """Courbes à tracer. ``with_raw`` : ajoute, sous chaque voie modifiée, ses données brutes."""
-        several_files = len({name for name, _ in keys}) > 1
+        several_files = len({name for name, _label in keys}) > 1
         out = []
         for i, (name, label) in enumerate(keys):
             m = self.measurements[name]
@@ -305,7 +312,7 @@ class Session:
             )
             if with_raw and self.modified_points((name, label)):
                 raw = self.raw_values((name, label))[first:first + len(x)]
-                out.append(PlotSeries(gid="raw:{}".format(i), label="_brut", x=x, y=raw, unit=ch.unit,
+                out.append(PlotSeries(gid=_("raw:{}").format(i), label=_("_brut"), x=x, y=raw, unit=ch.unit,
                                       quantity=ch.quantity, shiftable=out[-1].shiftable, index_base=first, raw=True))
         return out
 
@@ -314,18 +321,18 @@ class Session:
     def export_csv(self, path, keys: Sequence[Key], progress: Optional[Callable] = None) -> pd.DataFrame:
         """US-06 : CSV des voies + journal des traitements à côté (« …_journal.txt »)."""
         if self.reference is None:
-            raise ValueError("Aucun fichier chargé.")
+            raise ValueError(_("Aucun fichier chargé."))
         if progress:
-            progress("Fusion de {} voie(s) sur une base de temps commune…".format(len(keys)), 0.1)
+            progress(_("Fusion de {} voie(s) sur une base de temps commune…").format(len(keys)), 0.1)
         df = merge_selection(
             list(self.measurements.values()), self.reference, keys, self.time_offset_min,
             window=self.window, step_s=self.export_step_s, percent=self.percent_axis,
         )
         if progress:
-            progress("Écriture de {} lignes dans {}…".format(len(df), Path(path).name), 0.5)
+            progress(_("Écriture de {} lignes dans {}…").format(len(df), Path(path).name), 0.5)
         write_csv(df, path)
-        self.log("Export CSV : {} ({} lignes × {} voies, base de temps : {}, grille : {})".format(
-            Path(path).name, len(df), len(keys), TIME_MODES[self.time_mode], EXPORT_STEPS[self.export_step_s]))
+        self.log(_("Export CSV : {} ({} lignes × {} voies, base de temps : {}, grille : {})").format(
+            Path(path).name, len(df), len(keys), _(TIME_MODES[self.time_mode]), _(EXPORT_STEPS[self.export_step_s])))
         journal_path(path).write_text(self.journal_text(), encoding="utf-8")
         return df
 

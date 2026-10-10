@@ -7,10 +7,10 @@ climatique…), les recale sur un même axe temps, supprime le bruit et les pics
 saturation, puis exporte un CSV propre.
 
 ![Signal brut](docs/captures/1-signal-brut.png)
-*Avant : pics de saturation parasites à ±10 A.*
+*Avant : pics parasites à ±10 A.*
 
 ![Signal nettoyé](docs/captures/2-signal-nettoye.png)
-*Après « Nettoyer » : les créneaux restent intacts et le repos est à 0.*
+*Après « Nettoyer » : pics retirés, bruit lissé, créneaux intacts ; l'original reste visible en gris.*
 
 ---
 
@@ -36,12 +36,12 @@ python main.py
 ## Utilisation
 
 1. **Ouvrir des fichiers…** (essayer ceux du dossier `exemples/`).
-2. Cocher les voies à afficher.
-3. **Nettoyer…** : corrige le décalage de zéro au repos, supprime les pics parasites (quelle
-   que soit leur hauteur) et met à 0 le bruit de repos. La fenêtre montre, voie par voie, les
-   réglages (avec des suggestions calculées sur les données) et le nombre de points modifiés
-   **avant** d'appliquer. « Montrer les données brutes » affiche ensuite l'original en gris
-   pour vérifier. Bouton **?** / **Aide** : explications détaillées.
+2. Cocher les voies à afficher (elles portent le nom de la centrale : « Channel 4 »).
+3. **Nettoyer…** : supprime les pics parasites (quelle que soit leur hauteur) et **lisse le bruit
+   sans changer le niveau mesuré** (les créneaux restent verticaux, rien n'est mis à 0). En option :
+   forcer le repos à 0 sous un seuil calculé sur les données, corriger un décalage de zéro. La
+   fenêtre montre l'aperçu **avant** d'appliquer ; « Montrer les données brutes » affiche ensuite
+   l'original en gris. Bouton **?** / **Aide** : explications détaillées.
 
    ![Fenêtre de nettoyage](docs/captures/4-fenetre-nettoyage.png)
 4. **Clic gauche** sur un point abîmé pour le corriger (interpolation avec ses voisins).
@@ -71,6 +71,8 @@ Réglage **Base de temps** :
 *Toutes les voies : V / A à gauche, °C et %HR à droite.*
 
 ---
+
+**Langue** : français ou anglais, au choix dans la liste « FR / EN » en haut à droite (mémorisé).
 
 ## Formats reconnus
 

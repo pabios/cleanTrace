@@ -1,79 +1,108 @@
-"""Aide intégrée (bouton « ? ») : comment utiliser chaque partie de l'application."""
+"""Aide intégrée (boutons « Aide » et « ? »), en français et en anglais."""
 from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
 
+from .i18n import _, get_language
 from .theme import C
 
+# Clé de section (utilisée par les boutons « ? ») -> (titre FR, texte FR, titre EN, texte EN)
 SECTIONS = [
-    ("Démarrer", """\
+    ("Démarrer", "Démarrer", """\
 1. « Ouvrir des fichiers… » : choisissez un ou plusieurs exports (Graphtec, nanodac…).
    Ouvrez le fichier d'origine de l'appareil, sans le passer par Excel (Excel coupe
    au-delà de 1 048 576 lignes).
 2. Cochez les voies à afficher. Cliquer sur un nom de fichier coche / décoche toutes
-   ses voies.
-3. Nettoyez, corrigez, puis « Exporter en CSV… » : seules les voies cochées sont
-   exportées, avec les nettoyages et corrections."""),
+   ses voies. Chaque voie s'affiche sous le nom de la centrale : « Channel 4 ».
+3. Nettoyez, corrigez, puis « Exporter » : seules les voies cochées sont exportées,
+   avec les nettoyages et corrections.
+4. Langue : liste « FR / EN » en haut à droite (choix mémorisé).""",
+     "Getting started", """\
+1. “Open files…”: choose one or more exports (Graphtec, nanodac…). Open the original
+   file from the device, without going through Excel (Excel truncates beyond
+   1,048,576 rows).
+2. Tick the channels to display. Clicking a file name ticks / unticks all its
+   channels. Each channel is shown with the data logger name: “Channel 4”.
+3. Clean, correct, then “Export”: only ticked channels are exported, with their
+   cleaning and corrections.
+4. Language: “FR / EN” list at the top right (remembered)."""),
 
-    ("Nettoyage", """\
-Le nettoyage s'applique aux voies COCHÉES, quand vous cliquez sur « Nettoyer… ».
-Une fenêtre montre, voie par voie, le seuil utilisé et le nombre de points qui seront
-modifiés AVANT d'appliquer (bouton « Aperçu »).
+    ("Nettoyage", "Nettoyage", """\
+Le nettoyage s'applique aux voies COCHÉES, quand vous cliquez sur « Nettoyer… ». La
+fenêtre montre, voie par voie, ce qui sera modifié AVANT d'appliquer (« Aperçu »).
+Tout est noté dans le journal et tout est réversible (« Annuler le nettoyage »).
 
-Ordre des traitements : 1. décalage de zéro, 2. pics parasites, 3. bruit de repos.
-Chaque traitement appliqué est noté dans le journal (bouton « Journal »).
+Pics parasites (activé par défaut)
+  Un groupe de points est un pic parasite s'il est étroit (5 points au plus, réglable ;
+  à 100 ms, 5 points = 0,5 s) et s'il s'écarte nettement de la courbe des deux côtés
+  (plus de 8 fois le bruit de mesure). Sa hauteur ne compte pas : un parasite de 1 A
+  est retiré comme un de 10 A. Il est remplacé par le niveau de la courbe autour de lui.
+  Les fronts de créneaux, paliers et décharges ne sont jamais touchés. Les trous courts
+  (« +++++++ », « BURNOUT ») sont comblés par les points voisins.
+  Option « Seulement la saturation » : ne retire que les pics au-delà de 98 % du max.
 
-Décalage de zéro
-  Si le niveau de repos d'une voie n'est pas exactement 0 (ex. −0,04 A au lieu de 0 :
-  dérive du capteur ou du shunt), ce décalage est mesuré et soustrait à toute la voie.
-  Il n'est proposé que pour les voies qui reviennent au repos près de 0 ; jamais pour
-  une tension d'alimentation (24 V permanents) ni un petit courant permanent. La
-  valeur est modifiable (ou à vider) dans la colonne « DÉCALAGE 0 ».
+Réduire le bruit (activé par défaut : LISSAGE)
+  Le bruit est lissé morceau par morceau entre les fronts : un créneau reste vertical,
+  un palier garde sa valeur moyenne mesurée, une décharge garde sa forme. RIEN n'est
+  mis à 0 : un petit courant réel (même 5 mA) est conservé. « Lissage sur … points »
+  règle la force du lissage (plus de points = plus lisse).
+  Option « Forcer à 0 sous le seuil » (règle d'origine) : pendant les repos, les valeurs
+  sous le seuil de la voie sont mises à 0. Le seuil est calculé sur le bruit réel de
+  chaque voie (colonne « Suggestion »). En rouge : plus de 90 % de la voie serait mise
+  à 0 — c'est sans doute un vrai signal.
 
-Pics parasites
-  Un groupe de points est un pic parasite si :
-  • il est étroit : 5 points consécutifs au plus (réglable ; à 100 ms, 5 points = 0,5 s) ;
-  • il s'écarte du niveau de la courbe autour de lui de plus de 8 fois le bruit de mesure
-    ET de plus de 5 % de l'amplitude utile de la voie (calculée sans les pics).
-  Sa hauteur ne compte pas : un parasite de 1 A est retiré comme un de 10 A. Il est
-  remplacé par le niveau de la courbe autour de lui (médiane locale). Rien d'autre n'est
-  touché : créneaux, paliers, décharges et bruit normal restent identiques. Les trous
-  courts (« +++++++ », « BURNOUT ») sont comblés par les points voisins.
-  Option « Seulement la saturation » : ne retire que les pics au-delà de 98 % du maximum
-  de la voie (règle d'origine du cahier des charges).
-  Limites : un vrai phénomène plus court que la largeur réglée serait retiré ; un
-  parasite plus large ne l'est pas (augmentez la largeur, ou corrigez au clic).
-
-Bruit de repos (forcer à 0)
-  Pendant les arrêts, un courant ou une tension oscille autour de 0 : les valeurs dont
-  la valeur absolue est sous le SEUIL de la voie (au moins 3 points d'affilée) sont
-  mises à 0. Le seuil est réglable voie par voie :
-  • par défaut : 10 mA / 0,010 A / 5 mV / 0,005 V selon l'unité, SAUF si la voie ne
-    revient jamais à 0 (« pas de repos à 0 ») : alors aucune mise à 0 ;
-  • « Suggestion » : 1,5 × le bruit mesuré pendant les repos à 0 (« Utiliser les
-    suggestions » remplit tous les seuils) ;
-  • en rouge dans l'aperçu : plus de 90 % de la voie serait mise à 0 — à vérifier ;
-  • seuil vide = pas de mise à 0 pour cette voie ;
-  • ATTENTION aux petits courants : une voie qui mesure 3 mA en permanence serait
-    entièrement mise à 0 avec un seuil de 10 mA.
-  « 0 point » est normal sur une voie qui ne revient jamais à 0 (ex. courant toujours
-  entre 80 et 160 mA).
+Décalage de zéro (option, désactivé par défaut)
+  Si le repos d'une voie n'est pas exactement à 0 (ex. −0,04 A), ce niveau peut être
+  soustrait à toute la voie. À n'utiliser que si vous êtes sûr qu'il s'agit d'une dérive
+  du capteur et non d'un vrai courant.
 
 Vérifier le résultat
   « Montrer les données brutes (en gris) » affiche, sous chaque voie nettoyée ou
-  corrigée, ses données d'origine : on voit exactement ce qui a été modifié.
+  corrigée, ses données d'origine : on voit exactement ce qui a été modifié.""",
+     "Cleaning", """\
+Cleaning applies to the TICKED channels when you click “Clean…”. The window shows,
+channel by channel, what will change BEFORE applying (“Preview”). Everything is
+recorded in the log and can be undone (“Undo cleaning”).
 
-Annuler
-  « Annuler le nettoyage » remet les données brutes : annule nettoyages ET corrections au clic des voies
-  cochées."""),
+Spurious spikes (on by default)
+  A group of points is a spurious spike if it is narrow (5 points at most, adjustable;
+  at 100 ms, 5 points = 0.5 s) and clearly departs from the curve on both sides (more
+  than 8 times the measurement noise). Its height does not matter: a 1 A spike is
+  removed like a 10 A one. It is replaced by the surrounding curve level. Square-wave
+  edges, plateaus and discharges are never touched. Short gaps (“+++++++”,
+  “BURNOUT”) are filled from neighbouring points.
+  Option “Saturation only”: removes only spikes above 98 % of the maximum.
 
-    ("Correction au clic", """\
+Reduce noise (on by default: SMOOTHING)
+  Noise is smoothed piece by piece between edges: a square wave stays vertical, a
+  plateau keeps its measured mean value, a discharge keeps its shape. NOTHING is set to
+  0: a small real current (even 5 mA) is kept. “Smoothing over … points” sets the
+  strength (more points = smoother).
+  Option “Force to 0 below the threshold” (original rule): during rest phases, values
+  below the channel threshold are set to 0. The threshold is computed from each
+  channel's real noise (“Suggestion” column). In red: more than 90 % of the channel
+  would be set to 0 — it is probably a real signal.
+
+Zero offset (optional, off by default)
+  If a channel's rest level is not exactly 0 (e.g. −0.04 A), this level can be
+  subtracted from the whole channel. Use it only if you are sure it is a sensor drift
+  and not a real current.
+
+Checking the result
+  “Show raw data (in grey)” displays, under each cleaned or corrected channel, its
+  original data: you see exactly what was changed."""),
+
+    ("Correction au clic", "Correction au clic", """\
 Clic gauche sur un point abîmé : il est remplacé par l'interpolation de ses deux
 voisins. Désactivez d'abord la loupe / le déplacement de la barre d'outils (bouton
-enfoncé = le clic sert à zoomer). Zoomez pour viser un point précis."""),
+enfoncé = le clic sert à zoomer). Zoomez pour viser un point précis.""",
+     "Click correction", """\
+Left-click a damaged point: it is replaced by the interpolation of its two
+neighbours. First disable the zoom / pan tool of the toolbar (pressed button = the
+click zooms). Zoom in to target a precise point."""),
 
-    ("Base de temps", """\
+    ("Base de temps", "Base de temps", """\
 Pour superposer plusieurs fichiers :
 • Heure réelle : chaque mesure à son heure (même essai, appareils à l'heure).
 • Période commune : seulement la période où tous les fichiers mesurent ; ils
@@ -85,9 +114,22 @@ Grille d'export : celle du fichier de référence, ou une grille commune (100 ms
 pour avoir une valeur de chaque appareil sur chaque ligne (mesure la plus proche).
 
 Décalage enceinte climatique : décale les courbes des fichiers ne contenant que des
-°C / %HR (nanodac) si l'enceinte réagit avec retard."""),
+°C / %HR (nanodac) si l'enceinte réagit avec retard.""",
+     "Time base", """\
+To overlay several files:
+• Real time: each measurement at its clock time (same test, devices on time).
+• Common period: only the period where all files are recording; they start and
+  end together.
+• Starts at 0: each file starts at 0 (device clocks not set).
+• Stretched duration: each file from 0 to 100 % of its duration, to compare the
+  shape of two tests (time is distorted).
+Export grid: the reference file's grid, or a common grid (100 ms, 1 s…) to get one
+value from each device on every row (nearest measurement).
 
-    ("Livrables pour le client", """\
+Climatic chamber shift: shifts the curves of files that only contain °C / %RH
+(nanodac) if the chamber lags."""),
+
+    ("Livrables pour le client", "Livrables pour le client", """\
 Menu « Exporter » :
 • Données nettoyées (CSV + journal) : le CSV « ; » des voies cochées, et à côté un fichier
   « …_journal.txt » qui liste tous les traitements appliqués (traçabilité).
@@ -96,18 +138,36 @@ Menu « Exporter » :
 • Rapport PDF pour le client : synthèse (fichiers sources, appareils, périodes, base de
   temps), statistiques par voie sur la période affichée (min, max, moyenne,
   écart-type, points modifiés), graphique et journal des traitements.
-Astuce : zoomez sur la période utile avant d'exporter l'image ou le rapport."""),
+Astuce : zoomez sur la période utile avant d'exporter l'image ou le rapport.""",
+     "Customer deliverables", """\
+“Export” menu:
+• Cleaned data (CSV + log): the “;” CSV of the ticked channels, plus a
+  “…_journal.txt” file listing every treatment applied (traceability).
+• Chart image (PNG, PDF, SVG): the chart as displayed (same zoom), A4 landscape, to
+  insert in a report.
+• PDF report for the customer: summary (source files, devices, periods, time base),
+  per-channel statistics over the period shown (min, max, mean, standard deviation,
+  modified points), chart and processing log.
+Tip: zoom on the useful period before exporting the image or the report."""),
 
-    ("En cas de problème", """\
+    ("En cas de problème", "En cas de problème", """\
 Les longues opérations (ouverture, nettoyage, exports) affichent leur avancement ; la
 fenêtre reste utilisable. En cas d'erreur, un message l'explique et les détails
 techniques sont enregistrés dans le fichier « cleantrace_erreurs.log » de votre
-dossier personnel (C:\\Users\\<vous>) : envoyez-le au développeur avec une capture."""),
+dossier personnel (C:\\Users\\<vous>) : envoyez-le au développeur avec une capture.
 
-    ("Fichier refusé", """\
-Si un fichier n'est pas reconnu, le message indique ce qui a été lu. Répondez « Oui »
-pour enregistrer un extrait (début et fin du fichier, quelques Ko) et envoyez-le au
-développeur. Vérifiez aussi la version dans le titre de la fenêtre."""),
+Fichier refusé : le message indique ce qui a été lu. Répondez « Oui » pour enregistrer
+un extrait (début et fin du fichier, quelques Ko) et envoyez-le au développeur.
+Vérifiez aussi la version dans le titre de la fenêtre.""",
+     "Troubleshooting", """\
+Long operations (opening, cleaning, exports) show their progress; the window stays
+usable. If an error occurs, a message explains it and the technical details are saved
+to the “cleantrace_erreurs.log” file in your home folder (C:\\Users\\<you>): send it to
+the developer with a screenshot.
+
+Rejected file: the message shows what was read. Answer “Yes” to save an excerpt
+(beginning and end of the file, a few KB) and send it to the developer. Also check
+the version in the window title."""),
 ]
 
 
@@ -125,7 +185,8 @@ class HelpWindow(tk.Toplevel):
 
     def __init__(self, master):
         super().__init__(master)
-        self.title("Aide — CleanTrace")
+        english = get_language() == "en"
+        self.title(_("Aide") + " — CleanTrace")
         self.geometry("760x660")
         self.configure(background=C["background"])
         outer = tk.Frame(self, background=C["card"], highlightbackground=C["border"], highlightthickness=1)
@@ -141,13 +202,13 @@ class HelpWindow(tk.Toplevel):
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.text.tag_configure("title", font=("TkDefaultFont", 13, "bold"), foreground=C["fg"],
                                 spacing1=14, spacing3=6)
-        for title, body in SECTIONS:
-            self.text.mark_set("section-" + title, self.text.index("end-1c"))
-            self.text.mark_gravity("section-" + title, tk.LEFT)
-            self.text.insert(tk.END, title + "\n", "title")
-            self.text.insert(tk.END, body + "\n\n")
+        for key, title_fr, body_fr, title_en, body_en in SECTIONS:
+            self.text.mark_set("section-" + key, self.text.index("end-1c"))
+            self.text.mark_gravity("section-" + key, tk.LEFT)
+            self.text.insert(tk.END, (title_en if english else title_fr) + "\n", "title")
+            self.text.insert(tk.END, (body_en if english else body_fr) + "\n\n")
         self.text.configure(state=tk.DISABLED)
-        ttk.Button(self, text="Fermer", style="Primary.TButton", command=self.destroy).pack(
+        ttk.Button(self, text=_("Fermer"), style="Primary.TButton", command=self.destroy).pack(
             anchor=tk.E, padx=16, pady=(0, 16))
 
     def show(self, section: str) -> None:

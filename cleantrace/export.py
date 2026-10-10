@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from .loader import TIME_COL, Measurement
+from .i18n import _
 
 Key = Tuple[str, str]  # (nom du fichier, libellé de la voie)
 
@@ -37,7 +38,7 @@ def merge_selection(
     * ``percent`` : axe du temps en % de la durée de chaque fichier (mode « étiré »).
     """
     if not keys:
-        raise ValueError("Aucune voie sélectionnée.")
+        raise ValueError(_("Aucune voie sélectionnée."))
     by_name: Dict[str, Measurement] = {m.name: m for m in measurements}
     wanted: Dict[str, List[str]] = {}
     for name, label in keys:
@@ -84,7 +85,7 @@ def merge_selection(
 
     if percent:
         return out.rename(columns={TIME_COL: PERCENT_COL})
-    out.insert(1, "Temps (H:MM:SS)", hms_column(out[TIME_COL].to_numpy()))
+    out.insert(1, _("Temps (H:MM:SS)"), hms_column(out[TIME_COL].to_numpy()))
     return out
 
 

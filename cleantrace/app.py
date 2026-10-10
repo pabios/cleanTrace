@@ -36,6 +36,7 @@ from .session import journal_path
 from .plotting import PlotManager, format_hms
 from .session import EXPORT_STEPS, TIME_MODES, Session
 from .theme import C, CheckImages, ScrollFrame, apply_theme, bordered, card, separator
+from .i18n import _, get_language, load_language, set_language
 
 APP_TITLE = "CleanTrace — MultiPlotter pour bancs d'essai"
 FILE_TYPES = [
@@ -68,15 +69,41 @@ class CleanTraceApp:
         root.report_callback_exception = self._on_unexpected_error
         self.fonts = apply_theme(root)
         self.check_images = CheckImages(root)
+        self._build_ui()
+        self._set_status(_("Prêt. Ouvrez un ou plusieurs fichiers de mesure."))
 
+    def _build_ui(self) -> None:
+        self.root.title("{}  (v{})".format(_(APP_TITLE), __version__))
+        self._action_buttons = []
         self._build_header()
         self._build_statusbar()
-        body = ttk.PanedWindow(root, orient=tk.HORIZONTAL)
+        body = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         body.pack(fill=tk.BOTH, expand=True, padx=16, pady=16)
         body.add(self._build_sidebar(body), weight=0)
         body.add(self._build_plot(body), weight=1)
         self._update_empty_state()
-        self._set_status("Prêt. Ouvrez un ou plusieurs fichiers de mesure.")
+
+    def set_language(self, language: str) -> None:
+        """Change la langue : l'interface est reconstruite, fichiers et traitements sont gardés."""
+        if self.busy or language == get_language():
+            return
+        state = {name: getattr(self, name).get() for name in
+                 ("chk_noise", "chk_peaks", "chk_offset", "chk_show_raw", "chk_click_edit", "noise_mode")}
+        offset = self.session.time_offset_min
+        set_language(language)
+        for widget in self.root.winfo_children():
+            widget.destroy()
+        HelpWindow._instance = JournalWindow._instance = None
+        self._build_ui()
+        for name, value in state.items():
+            getattr(self, name).set(value)
+        self.time_mode_var.set(_(TIME_MODES[self.session.time_mode]))
+        self.export_step_var.set(_(EXPORT_STEPS[self.session.export_step_s]))
+        self._update_offset_range()
+        self._set_offset(offset)
+        self._rebuild_tree()
+        self.redraw()
+        self._set_status(_("Langue : français."))
 
     # ================================================================ construction
 
@@ -93,31 +120,36 @@ class CleanTraceApp:
         logo.create_rectangle(1, 1, 27, 27, fill=C["primary"], outline=C["primary"])
         logo.create_line(6, 18, 11, 18, 14, 9, 17, 20, 20, 13, 23, 13, fill=C["primary_fg"], width=2)
         logo.pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Label(brand, text="CleanTrace", style="Brand.TLabel").pack(side=tk.LEFT)
-        ttk.Label(brand, text="v" + __version__, style="Badge.TLabel").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Label(brand, text="Mesures de bancs d'essai", style="Muted.Card.TLabel").pack(side=tk.LEFT, padx=(12, 0))
+        ttk.Label(brand, text=_("CleanTrace"), style="Brand.TLabel").pack(side=tk.LEFT)
+        ttk.Label(brand, text=_("v") + __version__, style="Badge.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Label(brand, text=_("Mesures de bancs d'essai"), style="Muted.Card.TLabel").pack(side=tk.LEFT, padx=(12, 0))
 
         actions = ttk.Frame(inner, style="Card.TFrame")
         actions.pack(side=tk.RIGHT)
-        ttk.Button(actions, text="Aide", style="Ghost.TButton",
+        self.language_var = tk.StringVar(value=get_language().upper())
+        language = ttk.Combobox(actions, textvariable=self.language_var, values=["FR", "EN"], state="readonly",
+                                width=4)
+        language.pack(side=tk.LEFT, padx=(0, 10))
+        language.bind("<<ComboboxSelected>>", lambda _e: self.set_language(self.language_var.get().lower()))
+        ttk.Button(actions, text=_("Aide"), style="Ghost.TButton",
                    command=lambda: HelpWindow.open(self.root)).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(actions, text="Journal", style="Ghost.TButton",
+        ttk.Button(actions, text=_("Journal"), style="Ghost.TButton",
                    command=self.show_journal).pack(side=tk.LEFT, padx=(0, 6))
-        button = ttk.Button(actions, text="Réinitialiser", command=self.reset_all)
+        button = ttk.Button(actions, text=_("Réinitialiser"), command=self.reset_all)
         button.pack(side=tk.LEFT, padx=(0, 6))
         self._action_buttons.append(button)
-        self.export_button = ttk.Menubutton(actions, text="Exporter  ▾", style="TMenubutton")
+        self.export_button = ttk.Menubutton(actions, text=_("Exporter  ▾"), style="TMenubutton")
         menu = tk.Menu(self.export_button, tearoff=False, background=C["card"], foreground=C["fg"],
                        activebackground=C["muted"], activeforeground=C["fg"], bd=1, relief=tk.SOLID,
                        font=self.fonts.base)
-        menu.add_command(label="Données nettoyées (CSV + journal)…", command=self.export_csv)
-        menu.add_command(label="Image du graphique (PNG, PDF, SVG)…", command=self.export_image)
+        menu.add_command(label=_("Données nettoyées (CSV + journal)…"), command=self.export_csv)
+        menu.add_command(label=_("Image du graphique (PNG, PDF, SVG)…"), command=self.export_image)
         menu.add_separator()
-        menu.add_command(label="Rapport PDF pour le client…", command=self.export_report)
+        menu.add_command(label=_("Rapport PDF pour le client…"), command=self.export_report)
         self.export_button.configure(menu=menu)
         self.export_button.pack(side=tk.LEFT, padx=(0, 6))
         self._action_buttons.append(self.export_button)
-        button = ttk.Button(actions, text="Ouvrir des fichiers…", command=self.open_files, style="Primary.TButton")
+        button = ttk.Button(actions, text=_("Ouvrir des fichiers…"), command=self.open_files, style="Primary.TButton")
         button.pack(side=tk.LEFT, padx=(0, 6))
         self._action_buttons.append(button)
 
@@ -126,13 +158,13 @@ class CleanTraceApp:
         side = scroll.inner
 
         # --- US-02 : voies de mesure
-        outer, box = card(side, "Voies de mesure", "Cochez les voies à afficher, nettoyer et exporter.")
+        outer, box = card(side, _("Voies de mesure"), _("Cochez les voies à afficher, nettoyer et exporter."))
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         row = ttk.Frame(box, style="Card.TFrame")
         row.pack(fill=tk.X, pady=(0, 8))
-        ttk.Button(row, text="Tout cocher", style="Small.TButton",
+        ttk.Button(row, text=_("Tout cocher"), style="Small.TButton",
                    command=lambda: self.select_all(True)).pack(side=tk.LEFT)
-        ttk.Button(row, text="Tout décocher", style="Small.TButton",
+        ttk.Button(row, text=_("Tout décocher"), style="Small.TButton",
                    command=lambda: self.select_all(False)).pack(side=tk.LEFT, padx=(6, 0))
         tree_frame = ttk.Frame(box, style="Card.TFrame")
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -153,53 +185,54 @@ class CleanTraceApp:
             return lambda header: ttk.Button(header, text="?", style="Icon.TButton", width=2,
                                              command=lambda: HelpWindow.open(self.root, section)).pack(side=tk.RIGHT)
 
-        outer, clean = card(side, "Nettoyage", "Pics parasites et bruit de repos des voies cochées.",
-                            actions=help_action("Nettoyage"))
+        outer, clean = card(side, _("Nettoyage"), _("Pics parasites et bruit des voies cochées."),
+                            actions=help_action(_("Nettoyage")))
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         self.chk_noise = tk.BooleanVar(value=True)
         self.chk_peaks = tk.BooleanVar(value=True)
-        self.chk_offset = tk.BooleanVar(value=True)
+        self.chk_offset = tk.BooleanVar(value=False)  # option : ne jamais décaler de vraies mesures par défaut
         self.chk_show_raw = tk.BooleanVar(value=True)
-        ttk.Checkbutton(clean, text="Corriger le décalage de zéro au repos", variable=self.chk_offset,
+        self.noise_mode = tk.StringVar(value="smooth")  # "smooth" (lisser) ou "zero" (forcer à 0)
+        ttk.Checkbutton(clean, text=_("Supprimer les pics parasites"), variable=self.chk_peaks,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
-        ttk.Checkbutton(clean, text="Supprimer les pics parasites", variable=self.chk_peaks,
+        ttk.Checkbutton(clean, text=_("Réduire le bruit (lissage, garde le niveau)"), variable=self.chk_noise,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
-        ttk.Checkbutton(clean, text="Forcer à 0 le bruit de repos", variable=self.chk_noise,
+        ttk.Checkbutton(clean, text=_("Corriger le décalage de zéro (option)"), variable=self.chk_offset,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
-        ttk.Checkbutton(clean, text="Montrer les données brutes (en gris)",
+        ttk.Checkbutton(clean, text=_("Montrer les données brutes (en gris)"),
                         variable=self.chk_show_raw, style="Card.TCheckbutton",
                         command=self.redraw).pack(anchor=tk.W, pady=(6, 0))
         row = ttk.Frame(clean, style="Card.TFrame")
         row.pack(fill=tk.X, pady=(10, 0))
         for text, command, style in (
-            ("Nettoyer…", self.clean_selected, "Primary.TButton"),
-            ("Annuler le nettoyage", self.restore_selected, "TButton"),
+            (_("Nettoyer…"), self.clean_selected, "Primary.TButton"),
+            (_("Annuler le nettoyage"), self.restore_selected, "TButton"),
         ):
             button = ttk.Button(row, text=text, command=command, style=style)
             button.pack(side=tk.LEFT, padx=(0, 6))
             self._action_buttons.append(button)
 
         # --- Superposition de fichiers : base de temps et grille d'export
-        outer, base = card(side, "Base de temps", "Comment superposer plusieurs fichiers.",
-                           actions=help_action("Base de temps"))
+        outer, base = card(side, _("Base de temps"), _("Comment superposer plusieurs fichiers."),
+                           actions=help_action(_("Base de temps")))
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
-        self.time_mode_var = tk.StringVar(value=TIME_MODES["real"])
-        mode_box = ttk.Combobox(base, textvariable=self.time_mode_var, values=list(TIME_MODES.values()),
+        self.time_mode_var = tk.StringVar(value=_(TIME_MODES[self.session.time_mode]))
+        mode_box = ttk.Combobox(base, textvariable=self.time_mode_var, values=[_(v) for v in TIME_MODES.values()],
                                 state="readonly")
         mode_box.pack(fill=tk.X)
         mode_box.bind("<<ComboboxSelected>>", self._on_time_mode)
         self.lbl_window = ttk.Label(base, text="", style="Muted.Card.TLabel", wraplength=350, justify=tk.LEFT)
         self.lbl_window.pack(anchor=tk.W, pady=(6, 0))
-        ttk.Label(base, text="Grille d'export", style="Strong.Card.TLabel").pack(anchor=tk.W, pady=(10, 4))
-        self.export_step_var = tk.StringVar(value=EXPORT_STEPS[None])
-        step_box = ttk.Combobox(base, textvariable=self.export_step_var, values=list(EXPORT_STEPS.values()),
+        ttk.Label(base, text=_("Grille d'export"), style="Strong.Card.TLabel").pack(anchor=tk.W, pady=(10, 4))
+        self.export_step_var = tk.StringVar(value=_(EXPORT_STEPS[self.session.export_step_s]))
+        step_box = ttk.Combobox(base, textvariable=self.export_step_var, values=[_(v) for v in EXPORT_STEPS.values()],
                                 state="readonly")
         step_box.pack(fill=tk.X)
         step_box.bind("<<ComboboxSelected>>", self._on_export_step)
 
         # --- US-04 : décalage temporel des courbes climatiques
-        outer, shift = card(side, "Enceinte climatique",
-                            "Décale les courbes °C / %HR si l'enceinte réagit avec retard.")
+        outer, shift = card(side, _("Enceinte climatique"),
+                            _("Décale les courbes °C / %HR si l'enceinte réagit avec retard."))
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 12))
         row = ttk.Frame(shift, style="Card.TFrame")
         row.pack(fill=tk.X)
@@ -207,17 +240,17 @@ class CleanTraceApp:
         self.offset_scale = ttk.Scale(row, from_=-30, to=30, orient=tk.HORIZONTAL,
                                       variable=self.offset_var, command=self._on_offset)
         self.offset_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.lbl_offset = ttk.Label(row, text="0,0 min", style="Card.TLabel", width=9, anchor=tk.E)
+        self.lbl_offset = ttk.Label(row, text=_("0,0 min"), style="Card.TLabel", width=9, anchor=tk.E)
         self.lbl_offset.pack(side=tk.LEFT, padx=(8, 6))
         ttk.Button(row, text="0", style="Icon.TButton", width=2,
                    command=lambda: self._set_offset(0.0)).pack(side=tk.LEFT)
 
         # --- US-05 : correction au clic
-        outer, edit = card(side, "Correction au clic",
-                           "Clic gauche sur un point abîmé : il est interpolé avec ses voisins.")
+        outer, edit = card(side, _("Correction au clic"),
+                           _("Clic gauche sur un point abîmé : il est interpolé avec ses voisins."))
         outer.pack(fill=tk.X, padx=(0, 12), pady=(0, 4))
         self.chk_click_edit = tk.BooleanVar(value=True)
-        ttk.Checkbutton(edit, text="Activée (sauf pendant zoom / déplacement)", variable=self.chk_click_edit,
+        ttk.Checkbutton(edit, text=_("Activée (sauf pendant zoom / déplacement)"), variable=self.chk_click_edit,
                         style="Card.TCheckbutton").pack(anchor=tk.W)
         return scroll
 
@@ -249,23 +282,23 @@ class CleanTraceApp:
         icon.create_line(15, 34, 22, 34, 27, 20, 32, 38, 37, 27, 42, 27, fill=C["fg_soft"], width=2.5,
                          capstyle=tk.ROUND, joinstyle=tk.ROUND)
         icon.pack(pady=(0, 12))
-        ttk.Label(empty, text="Aucun fichier ouvert", style="Title.Card.TLabel").pack()
-        ttk.Label(empty, text="Ouvrez un export Graphtec, nanodac… (CSV, TXT, DAT).\n"
-                              "Le format est détecté automatiquement.",
+        ttk.Label(empty, text=_("Aucun fichier ouvert"), style="Title.Card.TLabel").pack()
+        ttk.Label(empty, text=_("Ouvrez un export Graphtec, nanodac… (CSV, TXT, DAT).\n"
+                              "Le format est détecté automatiquement."),
                   style="Muted.Card.TLabel", justify=tk.CENTER).pack(pady=(4, 16))
         buttons = ttk.Frame(empty, style="Card.TFrame")
         buttons.pack()
-        ttk.Button(buttons, text="Ouvrir des fichiers…", style="Primary.TButton",
+        ttk.Button(buttons, text=_("Ouvrir des fichiers…"), style="Primary.TButton",
                    command=self.open_files).pack(side=tk.LEFT, padx=(0, 6))
         if all((EXAMPLES_DIR / f).is_file() for f in EXAMPLE_FILES):
-            ttk.Button(buttons, text="Essayer avec les exemples",
+            ttk.Button(buttons, text=_("Essayer avec les exemples"),
                        command=lambda: self.open_files([str(EXAMPLES_DIR / f) for f in EXAMPLE_FILES])
                        ).pack(side=tk.LEFT)
 
         # Indicateur de chargement, affiché par-dessus le graphique
         self.busy_panel, busy = card(frame, padding=22)
         self.busy_text = tk.StringVar()
-        ttk.Label(busy, text="Traitement en cours…", style="Title.Card.TLabel").pack(anchor=tk.W)
+        ttk.Label(busy, text=_("Traitement en cours…"), style="Title.Card.TLabel").pack(anchor=tk.W)
         ttk.Label(busy, textvariable=self.busy_text, style="Muted.Card.TLabel", wraplength=380,
                   justify=tk.LEFT).pack(anchor=tk.W, pady=(4, 14))
         self.busy_bar = ttk.Progressbar(busy, mode="indeterminate", length=380)
@@ -278,7 +311,7 @@ class CleanTraceApp:
         bar.pack(fill=tk.X, side=tk.BOTTOM)
         separator(self.root).pack(side=tk.BOTTOM, fill=tk.X)
         ttk.Label(bar, textvariable=self.status, style="Muted.TLabel").pack(side=tk.LEFT)
-        ttk.Label(bar, text="CleanTrace v" + __version__, style="Muted.TLabel").pack(side=tk.RIGHT)
+        ttk.Label(bar, text=_("CleanTrace v") + __version__, style="Muted.TLabel").pack(side=tk.RIGHT)
 
     # ==================================================================== actions
 
@@ -286,14 +319,14 @@ class CleanTraceApp:
         """US-01 : import (boîte de dialogue, ou liste de chemins pour les scripts)."""
         if paths is None:
             paths = filedialog.askopenfilenames(
-                parent=self.root, title="Ouvrir des fichiers de mesure",
-                initialdir=self._last_dir, filetypes=FILE_TYPES,
+                parent=self.root, title=_("Ouvrir des fichiers de mesure"),
+                initialdir=self._last_dir, filetypes=[(_(d), pattern) for d, pattern in FILE_TYPES],
             )
         if not paths:
             return
         self._last_dir = str(Path(paths[0]).parent)
         self.run_in_background(
-            "Chargement de {} fichier(s)…".format(len(paths)),
+            _("Chargement de {} fichier(s)…").format(len(paths)),
             lambda progress: self.session.read_files(paths, progress),
             self._on_files_read,
         )
@@ -308,32 +341,31 @@ class CleanTraceApp:
         self._update_offset_range()
         self.redraw()
         if loaded:
-            self._set_status("{} fichier(s) chargé(s).".format(len(loaded)))
+            self._set_status(_("{} fichier(s) chargé(s).").format(len(loaded)))
             notes = ["• {} : {}".format(m.name, " ".join(m.warnings)) for m in loaded if m.warnings]
             notes += ["• " + m.align_note for m in self.session.measurements.values() if m.align_note]
             if notes:
-                messagebox.showwarning("Import", "Fichiers chargés avec remarques :\n\n" + "\n".join(notes),
+                messagebox.showwarning(_("Import"), _("Fichiers chargés avec remarques :\n\n") + "\n".join(notes),
                                        parent=self.root)
         for path, message in errors:
             self._report_unreadable(path, message)
 
     def _report_unreadable(self, path: Path, message: str) -> None:
         """Fichier refusé : explication + extrait à envoyer pour adapter le logiciel."""
-        if not messagebox.askyesno(
-            "Fichier non conforme",
-            message + "\n\nEnregistrer un extrait de ce fichier (début et fin, quelques Ko) "
-            "pour l'envoyer au développeur ?",
+        if not messagebox.askyesno(_("Fichier non conforme"),
+            message + _("\n\nEnregistrer un extrait de ce fichier (début et fin, quelques Ko) "
+                        "pour l'envoyer au développeur ?"),
             icon=messagebox.ERROR, parent=self.root,
         ):
             return
         target = filedialog.asksaveasfilename(
-            parent=self.root, title="Enregistrer l'extrait",
-            initialfile="{}_extrait.txt".format(path.stem), defaultextension=".txt",
+            parent=self.root, title=_("Enregistrer l'extrait"),
+            initialfile=_("{}_extrait.txt").format(path.stem), defaultextension=".txt",
             filetypes=[("Texte", "*.txt")],
         )
         if target:
             write_extract(path, target)
-            messagebox.showinfo("Extrait enregistré", "Extrait enregistré :\n{}".format(target), parent=self.root)
+            messagebox.showinfo(_("Extrait enregistré"), _("Extrait enregistré :\n{}").format(target), parent=self.root)
 
     def select_all(self, state: bool) -> None:
         if self.busy:
@@ -346,8 +378,8 @@ class CleanTraceApp:
     def reset_all(self) -> None:
         if self.busy or not self.session.measurements:
             return
-        if not messagebox.askyesno("Réinitialiser", "Décharger tous les fichiers ?\n"
-                                   "Les nettoyages et corrections non exportés seront perdus.",
+        if not messagebox.askyesno(_("Réinitialiser"), _("Décharger tous les fichiers ?\n"
+                                   "Les nettoyages et corrections non exportés seront perdus."),
                                    parent=self.root):
             return
         self.session.clear()
@@ -355,12 +387,12 @@ class CleanTraceApp:
         self._set_offset(0.0)
         self._rebuild_tree()
         self.redraw()
-        self._set_status("Tous les fichiers ont été déchargés.")
+        self._set_status(_("Tous les fichiers ont été déchargés."))
 
     def clean_selected(self) -> None:
         keys = self.selected_keys()
         if not keys:
-            messagebox.showinfo("Nettoyage", "Cochez au moins une voie.", parent=self.root)
+            messagebox.showinfo(_("Nettoyage"), _("Cochez au moins une voie."), parent=self.root)
             return
         if self.busy:
             return
@@ -371,16 +403,19 @@ class CleanTraceApp:
 
         def done(report):
             self.redraw()
-            message = "Nettoyage de {} voie(s) : {} point(s) de pics corrigés, {} point(s) de bruit forcés à 0.".format(
-                len(keys), _thousands(report.peak_points), _thousands(report.noise_points))
-            if options.remove_noise and report.noise_points == 0:
-                message += " Aucun repos sous le seuil : voies qui ne reviennent pas à 0, ou seuil trop bas."
+            parts = [_("{} voie(s) nettoyée(s)").format(len(keys))]
+            if options.remove_peaks:
+                parts.append(_("{} point(s) de pics corrigés").format(_thousands(report.peak_points)))
+            if options.remove_noise and options.noise_mode == "smooth":
+                parts.append(_("bruit lissé (niveaux conservés)"))
+            elif options.remove_noise:
+                parts.append(_("{} point(s) de bruit mis à 0").format(_thousands(report.noise_points)))
             if self.chk_show_raw.get():
-                message += " Données brutes en gris pour comparer."
-            self._set_status(message)
+                parts.append(_("données brutes en gris pour comparer"))
+            self._set_status(" · ".join(parts) + ".")
 
         self.run_in_background(
-            "Nettoyage de {} voie(s)…".format(len(keys)),
+            _("Nettoyage de {} voie(s)…").format(len(keys)),
             lambda progress: self.session.apply_cleaning(keys, options, thresholds, offsets, progress), done,
         )
 
@@ -389,66 +424,65 @@ class CleanTraceApp:
         if keys and not self.busy:
             self.session.restore_raw(keys)
             self.redraw()
-            self._set_status("Données brutes restaurées pour {} voie(s).".format(len(keys)))
+            self._set_status(_("Données brutes restaurées pour {} voie(s).").format(len(keys)))
 
     def export_csv(self) -> None:
         """US-06 : export des voies cochées."""
         keys = self.selected_keys()
         if not keys:
-            messagebox.showinfo("Export", "Cochez au moins une voie à exporter.", parent=self.root)
+            messagebox.showinfo(_("Export"), _("Cochez au moins une voie à exporter."), parent=self.root)
             return
         path = filedialog.asksaveasfilename(
-            parent=self.root, title="Exporter les données nettoyées",
+            parent=self.root, title=_("Exporter les données nettoyées"),
             defaultextension=".csv", initialfile="cleantrace_export.csv",
-            filetypes=[("CSV (séparateur ;)", "*.csv")],
+            filetypes=[(_("CSV (séparateur ;)"), "*.csv")],
         )
         if not path:
             return
 
         def done(df):
-            messagebox.showinfo(
-                "Export terminé",
-                "{} lignes × {} voies exportées dans :\n{}\n\nJournal des traitements joint :\n{}".format(
+            messagebox.showinfo(_("Export terminé"),
+                _("{} lignes × {} voies exportées dans :\n{}\n\nJournal des traitements joint :\n{}").format(
                     _thousands(len(df)), len(keys), path, journal_path(path)),
                 parent=self.root,
             )
-            self._set_status("Export : {}".format(path))
+            self._set_status(_("Export : {}").format(path))
 
         self.run_in_background(
-            "Export de {} voie(s) vers {}…".format(len(keys), Path(path).name),
+            _("Export de {} voie(s) vers {}…").format(len(keys), Path(path).name),
             lambda progress: self.session.export_csv(path, keys, progress), done,
-            error_title="Export impossible",
+            error_title=_("Export impossible"),
         )
 
     def export_image(self) -> None:
         """Image du graphique tel qu'affiché (pour un rapport), A4 paysage."""
         keys = self.selected_keys()
         if not keys:
-            messagebox.showinfo("Image", "Cochez au moins une voie.", parent=self.root)
+            messagebox.showinfo(_("Image"), _("Cochez au moins une voie."), parent=self.root)
             return
         path = filedialog.asksaveasfilename(
-            parent=self.root, title="Enregistrer l'image du graphique", defaultextension=".png",
+            parent=self.root, title=_("Enregistrer l'image du graphique"), defaultextension=".png",
             initialfile="cleantrace_graphique.png",
-            filetypes=[("Image PNG", "*.png"), ("Document PDF", "*.pdf"), ("Image vectorielle SVG", "*.svg")],
+            filetypes=[(_("Image PNG"), "*.png"), ("Document PDF", "*.pdf"), (_("Image vectorielle SVG"), "*.svg")],
         )
         if not path:
             return
         view = self.plot.current_view()
         self.run_in_background(
-            "Création de l'image {}…".format(Path(path).name),
+            _("Création de l'image {}…").format(Path(path).name),
             lambda progress: save_figure_image(self.session, keys, view, path),
-            lambda result: self._set_status("Image enregistrée : {}".format(path)),
-            error_title="Image impossible",
+            lambda result: self._set_status(_("Image enregistrée : {}").format(path)),
+            error_title=_("Image impossible"),
         )
 
     def export_report(self) -> None:
         """Rapport PDF : synthèse, statistiques, graphique et journal des traitements."""
         keys = self.selected_keys()
         if not keys:
-            messagebox.showinfo("Rapport", "Cochez au moins une voie.", parent=self.root)
+            messagebox.showinfo(_("Rapport"), _("Cochez au moins une voie."), parent=self.root)
             return
         path = filedialog.asksaveasfilename(
-            parent=self.root, title="Enregistrer le rapport PDF", defaultextension=".pdf",
+            parent=self.root, title=_("Enregistrer le rapport PDF"), defaultextension=".pdf",
             initialfile="cleantrace_rapport.pdf", filetypes=[("Document PDF", "*.pdf")],
         )
         if not path:
@@ -456,13 +490,13 @@ class CleanTraceApp:
         view = self.plot.current_view()
 
         def done(result):
-            self._set_status("Rapport enregistré : {}".format(path))
-            messagebox.showinfo("Rapport enregistré", "Rapport PDF enregistré :\n{}".format(path), parent=self.root)
+            self._set_status(_("Rapport enregistré : {}").format(path))
+            messagebox.showinfo(_("Rapport enregistré"), _("Rapport PDF enregistré :\n{}").format(path), parent=self.root)
 
         self.run_in_background(
-            "Création du rapport {}…".format(Path(path).name),
+            _("Création du rapport {}…").format(Path(path).name),
             lambda progress: build_report(self.session, keys, view, path, progress=progress), done,
-            error_title="Rapport impossible",
+            error_title=_("Rapport impossible"),
         )
 
     def show_journal(self) -> None:
@@ -566,8 +600,8 @@ class CleanTraceApp:
         """Message clair + détails techniques enregistrés dans un fichier à envoyer."""
         log = log_error(details)
         messagebox.showerror(
-            title, "{}\n\nLes détails techniques ont été enregistrés dans :\n{}\n"
-                   "Envoyez ce fichier au développeur.".format(exc, log), parent=self.root)
+            title, _("{}\n\nLes détails techniques ont été enregistrés dans :\n{}\n"
+                   "Envoyez ce fichier au développeur.").format(exc, log), parent=self.root)
 
     def _update_empty_state(self) -> None:
         if self.session.measurements or self.busy:
@@ -585,7 +619,7 @@ class CleanTraceApp:
         keys = self.selected_keys()
         big = sum(len(self.session.measurements[k[0]].data) for k in keys) > 300_000
         if big and not self.busy:
-            with self._working("Affichage de {} voie(s)…".format(len(keys))):
+            with self._working(_("Affichage de {} voie(s)…").format(len(keys))):
                 self._redraw(keys)
         else:
             self._redraw(keys)
@@ -613,10 +647,10 @@ class CleanTraceApp:
                 self._item_key[item] = (m.name, ch.label)
         self._refresh_checkmarks()
         lines = ["{}{} · {} · {}".format("★ " if m is ref and len(self.session.measurements) > 1 else "",
-                                          m.name, m.source, m.period_label)
+                                          m.name, _(m.source), m.period_label)
                  for m in self.session.measurements.values()]
         if len(lines) > 1:
-            lines.append("★ référence de temps")
+            lines.append(_("★ référence de temps"))
         self.lbl_reference.config(text="\n".join(lines))
         self._update_window_label()
 
@@ -625,38 +659,38 @@ class CleanTraceApp:
         text = ""
         if s.time_mode == "common" and len(s.measurements) > 1:
             if s.window is None:
-                text = ("Aucune période commune entre ces fichiers : affichage complet. "
-                        "Essayez « Débuts à 0 » ou « Durée étirée ».")
+                text = (_("Aucune période commune entre ces fichiers : affichage complet. "
+                        "Essayez « Débuts à 0 » ou « Durée étirée »."))
             else:
                 duration = s.window[1] - s.window[0]
                 start = s.window_start
-                text = "Période commune : {} → {} ({})".format(
+                text = _("Période commune : {} → {} ({})").format(
                     start.strftime("%d/%m %H:%M:%S") if start is not None else format_hms(s.window[0]),
                     (start + pd.Timedelta(minutes=duration)).strftime("%d/%m %H:%M:%S")
                     if start is not None else format_hms(s.window[1]),
                     format_hms(duration))
         elif s.time_mode == "stretch":
-            text = "Chaque fichier va de 0 à 100 % de sa propre durée (le temps est déformé)."
+            text = _("Chaque fichier va de 0 à 100 % de sa propre durée (le temps est déformé).")
         elif s.time_mode == "zero":
-            text = "Chaque fichier démarre à 0 (heures réelles ignorées)."
+            text = _("Chaque fichier démarre à 0 (heures réelles ignorées).")
         self.lbl_window.config(text=text)
 
     def _on_time_mode(self, _event=None) -> None:
         if self.busy:
             return
         label = self.time_mode_var.get()
-        mode = next(k for k, v in TIME_MODES.items() if v == label)
+        mode = next(k for k, v in TIME_MODES.items() if _(v) == label)
         self.session.set_time_mode(mode)
         # Le décalage de l'enceinte (en minutes) n'a pas de sens sur un axe en %
         self.offset_scale.state(["disabled"] if self.session.percent_axis else ["!disabled"])
         self._update_window_label()
         self.redraw()
-        self._set_status("Base de temps : {}.".format(label))
+        self._set_status(_("Base de temps : {}.").format(label))
 
     def _on_export_step(self, _event=None) -> None:
         label = self.export_step_var.get()
-        self.session.export_step_s = next(k for k, v in EXPORT_STEPS.items() if v == label)
-        self._set_status("Grille d'export : {}.".format(label))
+        self.session.export_step_s = next(k for k, v in EXPORT_STEPS.items() if _(v) == label)
+        self._set_status(_("Grille d'export : {}.").format(label))
 
     def _refresh_checkmarks(self) -> None:
         """Case cochée / décochée + pastille de la couleur de la courbe (= légende)."""
@@ -690,7 +724,7 @@ class CleanTraceApp:
     def _on_offset(self, _value=None) -> None:
         value = round(float(self.offset_var.get()) * 2) / 2  # pas de 0,5 min
         self.offset_var.set(value)
-        self.lbl_offset.config(text="{:+.1f} min".format(value).replace(".", ",") if value else "0,0 min")
+        self.lbl_offset.config(text=_("{:+.1f} min").format(value).replace(".", ",") if value else "0,0 min")
         self.session.time_offset_min = value
         self.plot.set_time_offset(value)
 
@@ -710,7 +744,7 @@ class CleanTraceApp:
         index = self.plot.original_index(gid, plotted_index)
         value = self.session.correct_point(key, index)
         self.plot.update_data(gid, self.session.measurements[key[0]].data[key[1]].to_numpy())
-        self._set_status("Point corrigé : {} [{}], indice {} → {:.6g}".format(key[1], key[0], index, value))
+        self._set_status(_("Point corrigé : {} [{}], indice {} → {:.6g}").format(key[1], key[0], index, value))
 
     def _set_status(self, text: str) -> None:
         self.status.set(text)
@@ -752,7 +786,7 @@ class JournalWindow(tk.Toplevel):
 
     def __init__(self, master, text: str):
         super().__init__(master)
-        self.title("Journal des traitements — CleanTrace")
+        self.title(_("Journal des traitements — CleanTrace"))
         self.geometry("900x520")
         self.configure(background=C["background"])
         outer = bordered(self)
@@ -764,9 +798,9 @@ class JournalWindow(tk.Toplevel):
         box.pack(fill=tk.BOTH, expand=True)
         row = ttk.Frame(self)
         row.pack(fill=tk.X, padx=16, pady=(0, 16))
-        ttk.Label(row, text="Ce journal est joint à chaque export CSV et au rapport PDF.",
+        ttk.Label(row, text=_("Ce journal est joint à chaque export CSV et au rapport PDF."),
                   style="Muted.TLabel").pack(side=tk.LEFT)
-        ttk.Button(row, text="Fermer", style="Primary.TButton", command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(row, text=_("Fermer"), style="Primary.TButton", command=self.destroy).pack(side=tk.RIGHT)
 
 
 def _thousands(n: int) -> str:
@@ -798,6 +832,7 @@ def _enable_windows_dpi_awareness() -> None:
 def run() -> None:
     """Point d'entrée : crée la fenêtre et lance la boucle Tkinter."""
     _enable_windows_dpi_awareness()
+    load_language()
     root = tk.Tk()
     CleanTraceApp(root)
     root.mainloop()

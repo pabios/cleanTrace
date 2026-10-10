@@ -1,0 +1,278 @@
+"""Traductions anglaises (clé : texte français de l'interface)."""
+
+EN = {
+    # --- application
+    "CleanTrace — MultiPlotter pour bancs d'essai": "CleanTrace — MultiPlotter for test benches",
+    "Prêt. Ouvrez un ou plusieurs fichiers de mesure.": "Ready. Open one or more measurement files.",
+    "Langue : français.": "Language: English.",
+    "Mesures de bancs d'essai": "Test bench measurements",
+    "Aide": "Help",
+    "Journal": "Log",
+    "Réinitialiser": "Reset",
+    "Exporter  ▾": "Export  ▾",
+    "Données nettoyées (CSV + journal)…": "Cleaned data (CSV + log)…",
+    "Image du graphique (PNG, PDF, SVG)…": "Chart image (PNG, PDF, SVG)…",
+    "Rapport PDF pour le client…": "PDF report for the customer…",
+    "Ouvrir des fichiers…": "Open files…",
+    "Ouvrir des fichiers de mesure": "Open measurement files",
+    "Fichiers de mesure": "Measurement files",
+    "Tous les fichiers": "All files",
+    "Voies de mesure": "Channels",
+    "Cochez les voies à afficher, nettoyer et exporter.": "Tick the channels to display, clean and export.",
+    "Tout cocher": "Select all",
+    "Tout décocher": "Select none",
+    "★ référence de temps": "★ time reference",
+    "Nettoyage": "Cleaning",
+    "Pics parasites et bruit des voies cochées.": "Spurious spikes and noise of the ticked channels.",
+    "Supprimer les pics parasites": "Remove spurious spikes",
+    "Réduire le bruit (lissage, garde le niveau)": "Reduce noise (smoothing, keeps the level)",
+    "Corriger le décalage de zéro (option)": "Correct the zero offset (optional)",
+    "Montrer les données brutes (en gris)": "Show raw data (in grey)",
+    "Nettoyer…": "Clean…",
+    "Annuler le nettoyage": "Undo cleaning",
+    "Base de temps": "Time base",
+    "Comment superposer plusieurs fichiers.": "How to overlay several files.",
+    "Grille d'export": "Export grid",
+    "Enceinte climatique": "Climatic chamber",
+    "Décale les courbes °C / %HR si l'enceinte réagit avec retard.": "Shifts °C / %RH curves if the chamber lags.",
+    "Correction au clic": "Click correction",
+    "Clic gauche sur un point abîmé : il est interpolé avec ses voisins.":
+        "Left-click a damaged point: it is interpolated from its neighbours.",
+    "Activée (sauf pendant zoom / déplacement)": "Enabled (except while zooming / panning)",
+    "Aucun fichier ouvert": "No file open",
+    "Ouvrez un export Graphtec, nanodac… (CSV, TXT, DAT).\nLe format est détecté automatiquement.":
+        "Open a Graphtec, nanodac… export (CSV, TXT, DAT).\nThe format is detected automatically.",
+    "Essayer avec les exemples": "Try with the examples",
+    "Traitement en cours…": "Working…",
+    "Tous les fichiers ont été déchargés.": "All files have been unloaded.",
+    "Décharger tous les fichiers ?\nLes nettoyages et corrections non exportés seront perdus.":
+        "Unload all files?\nCleaning and corrections that were not exported will be lost.",
+    "Fichier non conforme": "Unsupported file",
+    "\n\nEnregistrer un extrait de ce fichier (début et fin, quelques Ko) pour l'envoyer au développeur ?":
+        "\n\nSave an excerpt of this file (beginning and end, a few KB) to send to the developer?",
+    "Enregistrer l'extrait": "Save the excerpt",
+    "Extrait enregistré": "Excerpt saved",
+    "Extrait enregistré :\n{}": "Excerpt saved:\n{}",
+    "{}_extrait.txt": "{}_excerpt.txt",
+    "Cochez au moins une voie.": "Tick at least one channel.",
+    "Cochez au moins une voie à exporter.": "Tick at least one channel to export.",
+    "Export": "Export",
+    "Exporter les données nettoyées": "Export the cleaned data",
+    "CSV (séparateur ;)": "CSV (; separator)",
+    "Export terminé": "Export complete",
+    "Export impossible": "Export failed",
+    "{} lignes × {} voies exportées dans :\n{}\n\nJournal des traitements joint :\n{}":
+        "{} rows × {} channels exported to:\n{}\n\nProcessing log attached:\n{}",
+    "Export : {}": "Export: {}",
+    "Export de {} voie(s) vers {}…": "Exporting {} channel(s) to {}…",
+    "Image": "Image",
+    "Enregistrer l'image du graphique": "Save the chart image",
+    "Image PNG": "PNG image",
+    "Image vectorielle SVG": "SVG vector image",
+    "Image impossible": "Image failed",
+    "Image enregistrée : {}": "Image saved: {}",
+    "Création de l'image {}…": "Creating image {}…",
+    "Rapport": "Report",
+    "Enregistrer le rapport PDF": "Save the PDF report",
+    "Rapport enregistré": "Report saved",
+    "Rapport impossible": "Report failed",
+    "Rapport enregistré : {}": "Report saved: {}",
+    "Rapport PDF enregistré :\n{}": "PDF report saved:\n{}",
+    "Création du rapport {}…": "Creating report {}…",
+    "Chargement de {} fichier(s)…": "Loading {} file(s)…",
+    "Import": "Import",
+    "{} fichier(s) chargé(s).": "{} file(s) loaded.",
+    "Fichiers chargés avec remarques :\n\n": "Files loaded with remarks:\n\n",
+    "Nettoyage de {} voie(s)…": "Cleaning {} channel(s)…",
+    "{} voie(s) nettoyée(s)": "{} channel(s) cleaned",
+    "{} point(s) de pics corrigés": "{} spike point(s) corrected",
+    "bruit lissé (niveaux conservés)": "noise smoothed (levels kept)",
+    "{} point(s) de bruit mis à 0": "{} noise point(s) set to 0",
+    "données brutes en gris pour comparer": "raw data in grey for comparison",
+    "Données brutes restaurées pour {} voie(s).": "Raw data restored for {} channel(s).",
+    "Affichage de {} voie(s)…": "Drawing {} channel(s)…",
+    "Point corrigé : {} [{}], indice {} → {:.6g}": "Point corrected: {} [{}], index {} → {:.6g}",
+    "{}\n\nLes détails techniques ont été enregistrés dans :\n{}\nEnvoyez ce fichier au développeur.":
+        "{}\n\nTechnical details were saved to:\n{}\nPlease send this file to the developer.",
+    "Base de temps : {}.": "Time base: {}.",
+    "Grille d'export : {}.": "Export grid: {}.",
+    "Aucune période commune entre ces fichiers : affichage complet. Essayez « Débuts à 0 » ou « Durée étirée ».":
+        "These files have no common period: showing everything. Try “Starts at 0” or “Stretched duration”.",
+    "Chaque fichier va de 0 à 100 % de sa propre durée (le temps est déformé).":
+        "Each file runs from 0 to 100 % of its own duration (time is distorted).",
+    "Chaque fichier démarre à 0 (heures réelles ignorées).": "Each file starts at 0 (real clock times ignored).",
+    "Période commune : {} → {} ({})": "Common period: {} → {} ({})",
+    "Journal des traitements — CleanTrace": "Processing log — CleanTrace",
+    "Ce journal est joint à chaque export CSV et au rapport PDF.":
+        "This log is attached to every CSV export and to the PDF report.",
+    "Fermer": "Close",
+    # --- listes
+    "Heure réelle": "Real time",
+    "Période commune": "Common period",
+    "Débuts à 0": "Starts at 0",
+    "Durée étirée (0-100 %)": "Stretched duration (0-100 %)",
+    "Grille du fichier de référence": "Reference file grid",
+    "Tous les pics étroits (recommandé)": "All narrow spikes (recommended)",
+    "Seulement la saturation, au-delà de": "Saturation only, above",
+    "Lisser (garde le niveau mesuré, recommandé)": "Smooth (keeps the measured level, recommended)",
+    "Forcer à 0 sous le seuil (phases de repos)": "Force to 0 below the threshold (rest phases)",
+    # --- fenêtre de nettoyage
+    "Nettoyage de {} voie(s)": "Cleaning {} channel(s)",
+    "Réglez les traitements, vérifiez l'aperçu, puis appliquez. Tout est noté dans le journal des traitements.":
+        "Set the treatments, check the preview, then apply. Everything is recorded in the processing log.",
+    "Traitements": "Treatments",
+    "Appliqués dans cet ordre aux voies ci-dessous. Tout est réversible.":
+        "Applied in this order to the channels below. Everything can be undone.",
+    "larges de": "at most",
+    "points au plus": "points wide",
+    "% du max": "% of max",
+    "Réduire le bruit": "Reduce noise",
+    "lissage sur": "smoothing over",
+    "points": "points",
+    "Corriger le décalage de zéro (option : soustrait le niveau de repos ≠ 0)":
+        "Correct the zero offset (optional: subtracts a rest level ≠ 0)",
+    "Voies cochées": "Ticked channels",
+    "Décalage et seuil : utilisés seulement si l'option correspondante est choisie. Champ vide = pas de correction.":
+        "Offset and threshold: used only if the matching option is selected. Empty field = no correction.",
+    "VOIE": "CHANNEL",
+    "MIN … MAX": "MIN … MAX",
+    "DÉCALAGE 0": "ZERO OFFSET",
+    "SEUIL (MISE À 0)": "THRESHOLD (SET TO 0)",
+    "SUGGESTION": "SUGGESTION",
+    "PICS": "SPIKES",
+    "BRUIT": "NOISE",
+    "calcul…": "computing…",
+    "pas de repos à 0": "no rest at 0",
+    "non calculable": "not computable",
+    "lissé": "smoothed",
+    "pas de bruit": "no noise",
+    "{} mis à 0 ({:.0%})": "{} set to 0 ({:.0%})",
+    "Analyse des voies…": "Analysing channels…",
+    "Analyse — voie {}/{} : {}": "Analysis — channel {}/{}: {}",
+    "Utiliser les suggestions": "Use suggestions",
+    "Aperçu": "Preview",
+    "Appliquer": "Apply",
+    "Annuler": "Cancel",
+    "Aperçu à jour — rien n'est encore modifié. Cliquez sur « Appliquer ».":
+        "Preview up to date — nothing has been changed yet. Click “Apply”.",
+    "Activez au moins un traitement.": "Enable at least one treatment.",
+    "Réglage invalide": "Invalid setting",
+    "Valeur invalide pour « {} » : {}": "Invalid value for “{}”: {}",
+    # --- graphique
+    "Signaux électriques": "Electrical signals",
+    "Température (°C)": "Temperature (°C)",
+    "Humidité (%HR)": "Humidity (%RH)",
+    "Temps (H:MM:SS)": "Time (H:MM:SS)",
+    "Avancement (% de la durée de chaque fichier)": "Progress (% of each file's duration)",
+    "{}{} j {:02d}:{:02d}": "{}{} d {:02d}:{:02d}",
+    # --- rapport
+    "Rapport de traitement des mesures": "Measurement processing report",
+    "Synthèse : fichiers sources, base de temps et statistiques des voies retenues":
+        "Summary: source files, time base and statistics of the selected channels",
+    "Fichiers sources": "Source files",
+    "Voies retenues (statistiques sur la période représentée)": "Selected channels (statistics over the period shown)",
+    "FICHIER": "FILE",
+    "APPAREIL": "DEVICE",
+    "PÉRIODE": "PERIOD",
+    "DÉBUT": "START",
+    "FIN": "END",
+    "POINTS": "POINTS",
+    "VOIES": "CHANNELS",
+    "UNITÉ": "UNIT",
+    "MOYENNE": "MEAN",
+    "ÉCART-TYPE": "STD DEV",
+    "POINTS MODIFIÉS": "MODIFIED POINTS",
+    "Journal des traitements (traçabilité des modifications des données brutes)":
+        "Processing log (traceability of changes to the raw data)",
+    "Image du graphique exportée : {}": "Chart image exported: {}",
+    "Rapport PDF : {}": "PDF report: {}",
+    "Rapport — page de synthèse…": "Report — summary page…",
+    "Rapport — graphique…": "Report — chart…",
+    "Rapport — journal des traitements…": "Report — processing log…",
+    "Édité le {}": "Issued on {}",
+    "Mode : {}": "Mode: {}",
+    "Grille d'export : {}": "Export grid: {}",
+    "Aucun traitement.": "No treatment.",
+    "Période commune : {} → {}": "Common period: {} → {}",
+    "Période représentée : {} → {}": "Period shown: {} → {}",
+    "Décalage enceinte climatique : {:+.1f} min": "Climatic chamber shift: {:+.1f} min",
+    "  (référence)": "  (reference)",
+    # --- journal
+    "Journal des traitements — CleanTrace v{}": "Processing log — CleanTrace v{}",
+    "Base de temps : {}": "Time base: {}",
+    "Fichier ouvert : {} — {} · {} · {} points{} · voies : {}": "File opened: {} — {} · {} · {} points{} · channels: {}",
+    " · du {} au {}": " · from {} to {}",
+    "Nettoyage {} [{}] : {}": "Cleaning {} [{}]: {}",
+    "décalage de zéro {:+.4g} {} soustrait": "zero offset {:+.4g} {} subtracted",
+    "{} point(s) de pics parasites corrigés ({}, ≤ {} points)": "{} spurious spike point(s) corrected ({}, ≤ {} points)",
+    "tous les pics étroits": "all narrow spikes",
+    "saturation > {:.0%} du max": "saturation > {:.0%} of max",
+    "bruit lissé sans changer le niveau (fenêtre {} points, fronts conservés)":
+        "noise smoothed without changing the level (window {} points, edges kept)",
+    "{} point(s) de bruit de repos mis à 0 (seuil {})": "{} rest noise point(s) set to 0 (threshold {})",
+    "aucun": "none",
+    "rien": "nothing",
+    "Données brutes restaurées : {} [{}]": "Raw data restored: {} [{}]",
+    "Correction au clic : {} [{}] point n°{} ({}) : {:.6g} -> {:.6g}": "Click correction: {} [{}] point #{} ({}): {:.6g} -> {:.6g}",
+    "Export CSV : {} ({} lignes × {} voies, base de temps : {}, grille : {})":
+        "CSV export: {} ({} rows × {} channels, time base: {}, grid: {})",
+    "Aucun fichier chargé.": "No file loaded.",
+    "Aucune voie sélectionnée.": "No channel selected.",
+    "Fusion de {} voie(s) sur une base de temps commune…": "Merging {} channel(s) on a common time base…",
+    "Écriture de {} lignes dans {}…": "Writing {} rows to {}…",
+    "Aperçu — voie {}/{} : {}": "Preview — channel {}/{}: {}",
+    "Nettoyage — voie {}/{} : {}": "Cleaning — channel {}/{}: {}",
+    "Fichier {}/{} — ": "File {}/{} — ",
+    # --- chargement des fichiers
+    "Analyse du format de {} ({:.0f} Mo)…": "Analysing the format of {} ({:.0f} MB)…",
+    "Lecture des mesures de {} ({:.0f} Mo)…": "Reading measurements from {} ({:.0f} MB)…",
+    "Conversion du temps de {}…": "Converting the time of {}…",
+    "Fichier introuvable : {}": "File not found: {}",
+    "Le fichier « {} » est vide.": "The file “{}” is empty.",
+    "Le fichier « {} » n'a pas pu être lu : {}": "The file “{}” could not be read: {}",
+    "Le fichier « {} » semble être un fichier binaire (ex. .GBD Graphtec ou .UHH nanodac), pas un export texte. "
+    "Exportez-le en CSV depuis l'appareil ou son logiciel.":
+        "The file “{}” looks like a binary file (e.g. Graphtec .GBD or nanodac .UHH), not a text export. "
+        "Export it to CSV from the device or its software.",
+    "Impossible de détecter le séparateur de colonnes du fichier « {} » (attendu : « ; », « , » ou tabulation, "
+    "avec au moins une colonne temps et une voie de mesure).\n\n{}":
+        "Cannot detect the column separator of the file “{}” (expected: “;”, “,” or tab, with at least a time "
+        "column and one measurement channel).\n\n{}",
+    "Le fichier « {} » ne contient pas de données numériques exploitables (aucune ligne de mesure reconnue).\n\n{}":
+        "The file “{}” contains no usable numeric data (no measurement row recognised).\n\n{}",
+    "Le fichier « {} » ne contient aucune voie de mesure numérique en plus de la colonne temps.\n\nColonnes lues : {}":
+        "The file “{}” has no numeric measurement channel besides the time column.\n\nColumns read: {}",
+    "La colonne temps du fichier « {} » est illisible.": "The time column of the file “{}” cannot be read.",
+    "La colonne temps « {} » du fichier « {} » est vide.": "The time column “{}” of the file “{}” is empty.",
+    "La colonne temps « {} » du fichier « {} » n'est pas reconnue (attendu : date/heure, H:MM:SS ou temps écoulé "
+    "en ms / s / min).":
+        "The time column “{}” of the file “{}” is not recognised (expected: date/time, H:MM:SS or elapsed time "
+        "in ms / s / min).",
+    "Aucune colonne temps trouvée dans « {} ».": "No time column found in “{}”.",
+    "Diagnostic : encodage {}, séparateur {}, {} colonnes.\nExtrait :\n{}\n\nEnvoyez un extrait de ce fichier "
+    "pour une correction rapide.":
+        "Diagnostic: encoding {}, separator {}, {} columns.\nExcerpt:\n{}\n\nSend an excerpt of this file "
+        "for a quick fix.",
+    "Le fichier annonce {} points mais n'en contient que {} : il est incomplet{}. Utilisez de préférence le "
+    "fichier d'origine de l'appareil.":
+        "The file announces {} points but only contains {}: it is incomplete{}. Prefer the original file "
+        "from the device.",
+    " (probablement tronqué par Excel, limité à 1 048 576 lignes)": " (probably truncated by Excel, limited to 1,048,576 rows)",
+    "Horodatage moins précis que la période d'échantillonnage ({}) : temps recalculé à partir de la période "
+    "(fichier réenregistré par Excel ?).":
+        "Timestamps are coarser than the sampling period ({}): time rebuilt from the period "
+        "(file re-saved by Excel?).",
+    "{} ligne(s) sans horodatage ignorée(s) (messages, lignes incomplètes).":
+        "{} row(s) without timestamp ignored (messages, incomplete rows).",
+    "{} valeur(s) hors échelle (+++++++, BURNOUT...) laissées vides : « Nettoyer » répare les plus courtes.":
+        "{} out-of-range value(s) (+++++++, BURNOUT...) left empty: “Clean” repairs the shortest ones.",
+    "Points remis dans l'ordre chronologique.": "Points put back in chronological order.",
+    "« {} » ({}) ne couvre pas la même période que la référence « {} » ({}) : autre essai ? Il est affiché à "
+    "partir de 0 pour comparer les courbes.":
+        "“{}” ({}) does not cover the same period as the reference “{}” ({}): another test? It is shown "
+        "from 0 to compare the curves.",
+    "Voie {}": "Channel {}",
+    "Nettoyer…": "Clean…",
+    "%d/%m/%Y à %H:%M": "%d/%m/%Y at %H:%M",
+    "Générique": "Generic",
+}

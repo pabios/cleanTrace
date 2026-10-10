@@ -20,7 +20,7 @@ GL980 = "GL980_Mes-_260601-170139.CSV"
 NANODAC = "nanodac_Rd_Z.txt"
 GL860 = EXAMPLES / "autres_formats" / "GL860_1s.CSV"
 ALL_EXAMPLES = [GL980, NANODAC]
-SHUNT = (GL980, "Channel 4 - I_s1 (A)")
+SHUNT = (GL980, "Channel 4")
 
 # Formats d'après les manuels constructeurs (tests/fixtures/)
 GL980_MANUEL = FIXTURES / "gl980_manuel.csv"
@@ -55,8 +55,8 @@ def test_real_gl980_layout():
     """Export GL980 réel : Vendor/Model…, AMP settings, XY, Position/Vernier, Data."""
     m = load_measurement(EXAMPLES / GL980)
     assert [c.label for c in m.channels] == [
-        "Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)", "Channel 5 - I_s2 (A)",
-        "Channel 6 - U_s1&2 (V)", "Channel 7 - I_s3 (A)", "Channel 8 - I_s4 (A)",
+        "Channel 3", "Channel 4", "Channel 5",
+        "Channel 6", "Channel 7", "Channel 8",
     ]
     assert m.start == pd.Timestamp("2026-06-01 17:01:39")  # colonnes Date + Time + us
     assert m.duration_min == pytest.approx(40, abs=0.01)
@@ -65,7 +65,7 @@ def test_real_gl980_layout():
 def test_real_nanodac_unit_from_descriptor():
     """« Date/Heure  Channel 2  (ENAN2);Group 1;M402-M210;°C » : c'est une température."""
     m = load_measurement(EXAMPLES / NANODAC)
-    assert [c.label for c in m.channels] == ["Channel 2 - M402-M210 (°C)"]
+    assert [c.label for c in m.channels] == ["Channel 2"]
     assert m.channels[0].quantity == TEMPERATURE
     assert m.is_thermal
     assert m.start == pd.Timestamp("2026-06-01 16:57:00")  # année sur 2 chiffres
@@ -77,7 +77,7 @@ def test_nanodac_descriptor_in_separate_column(tmp_path):
                   "03/06/26 16:42:00\t27,89\r\n03/06/26 16:43:00\t27,84\r\n03/06/26 16:44:00\t28,02\r\n"
                   .encode("cp1252"))
     m = load_measurement(f)
-    assert [c.label for c in m.channels] == ["Channel 2 - M402-M210 (°C)"]
+    assert [c.label for c in m.channels] == ["Channel 2"]
     assert m.start == pd.Timestamp("2026-06-03 16:42:00")
 
 
@@ -95,8 +95,8 @@ def test_real_gl860_double_header():
     """En-têtes sur deux lignes : No.,Date&Time,ms,CH1… puis NO.,Time,ms,V,mA…,A1234567890."""
     m = load_measurement(GL860)
     labels = [c.label for c in m.channels]
-    assert labels[:3] == ["Channel 1 - U_alim (V)", "Channel 2 - I_spcC1 (mA)", "Channel 3 (mA)"]
-    assert labels[-2:] == ["Channel 11 - I_LH7 (mA)", "Channel 13 - I_LB7 (mA)"]
+    assert labels[:3] == ["Channel 1", "Channel 2", "Channel 3"]
+    assert labels[-2:] == ["Channel 11", "Channel 13"]
     assert m.start == pd.Timestamp("2026-09-10 14:53:39")
 
 
@@ -105,11 +105,11 @@ def test_gl980_amp_settings_and_over_range():
     # noms de signaux et unités du tableau « Amp settings », voie CH4 (Off) ignorée,
     # colonnes d'alarme (texte) ignorées
     assert [c.label for c in m.channels] == [
-        "Channel 1 - Tension cellule (V)", "Channel 2 - Courant shunt (mV)", "Channel 3 - T cellule (°C)",
+        "Channel 1", "Channel 2", "Channel 3",
     ]
     assert m.start == pd.Timestamp("2026-10-01 09:00:30")
     assert m.period_s == pytest.approx(0.5)  # colonne « ms » prise en compte
-    assert m.data["Channel 2 - Courant shunt (mV)"].isna().sum() == 12  # « +++++++ » / « ------- »
+    assert m.data["Channel 2"].isna().sum() == 12  # « +++++++ » / « ------- »
     assert any("hors échelle" in w for w in m.warnings)
     assert not m.is_thermal
 
@@ -177,7 +177,7 @@ def test_gl980_mostly_text_columns(tmp_path):
     f.write_text(head + rows)
     m = load_measurement(f)
     assert m.source == "Graphtec"
-    assert [c.label for c in m.channels] == ["Channel 1 (V)", "Channel 2 (V)"]
+    assert [c.label for c in m.channels] == ["Channel 1", "Channel 2"]
     assert m.period_s == pytest.approx(0.1)  # colonne « us »
     assert m.start == pd.Timestamp("2026-06-01 17:01:39")
 
@@ -253,7 +253,7 @@ def test_invalid_files(tmp_path, content, message):
     "raw, label, quantity",
     [
         ("CH1", "Channel 1", "autre"),  # unité inconnue : jamais supposée hors Graphtec
-        ("CH03[V]", "Channel 3 (V)", VOLTAGE),
+        ("CH03[V]", "Channel 3", VOLTAGE),
         ("Courant (mA)", "Courant (mA)", CURRENT),
         ("Température", "Température (°C)", TEMPERATURE),
         ("HR (%)", "HR (%HR)", HUMIDITY),
@@ -267,7 +267,7 @@ def test_channel_labels(raw, label, quantity):
 
 
 def test_graphtec_channel_default_unit():
-    assert make_channel("CH1", default_unit="mV").label == "Channel 1 (mV)"
+    assert make_channel("CH1", default_unit="mV").label == "Channel 1"
 
 
 # --------------------------------------------------------------- US-03 nettoyage
@@ -339,31 +339,34 @@ def test_noise_threshold_suggestion():
     y = np.r_[np.full(500, 5.0), np.zeros(500), np.full(500, -5.0)] + rng.normal(0, 0.015, 1500)
     s = suggest_noise_threshold(y)
     assert 0.03 < s < 0.1  # bruit ±30-45 mA -> seuil ~50-70 mA (le seuil fixe de 10 mA était trop bas)
-    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False), noise_threshold=s)
+    out, report = clean_signal(y, "A", CleaningOptions(remove_peaks=False, noise_mode="zero"), noise_threshold=s)
     assert report.noise_points >= 495 and (out[500:1000] == 0).mean() > 0.99
     # petit courant permanent : aucune suggestion, et seuil vide = rien d'effacé
     small = 3.0 + rng.normal(0, 0.05, 670)
     assert suggest_noise_threshold(small) is None
-    out, report = clean_signal(small, "mA", CleaningOptions(remove_peaks=False), noise_threshold=None)
+    out, report = clean_signal(small, "mA", CleaningOptions(remove_peaks=False, noise_mode="zero"),
+                               noise_threshold=None)
     assert report.noise_points == 0
 
 
 def test_session_thresholds_preview_and_apply():
     s = Session()
     s.load_files([GL860])
-    key = (GL860.name, "Channel 11 - I_LH7 (mA)")
+    key = (GL860.name, "Channel 11")
     before = s.measurements[key[0]].data[key[1]].copy()
     assert s.noise_threshold(key) is None  # 2 à 4 mA permanents : pas de mise à 0 par défaut
-    assert s.preview_cleaning([key], CleaningOptions())[key].noise_points == 0
+    zero = CleaningOptions(noise_mode="zero")
+    assert s.preview_cleaning([key], zero)[key].noise_points == 0
     # seuil imposé à 10 mA : l'aperçu montre que tout serait effacé, sans rien modifier
-    assert s.preview_cleaning([key], CleaningOptions(), {key: 10.0})[key].noise_points == len(before)
+    assert s.preview_cleaning([key], zero, {key: 10.0})[key].noise_points == len(before)
     pd.testing.assert_series_equal(s.measurements[key[0]].data[key[1]], before)
-    s.apply_cleaning([key], CleaningOptions(), thresholds={key: 0.5})
+    s.apply_cleaning([key], zero, thresholds={key: 0.5})
     assert s.noise_threshold(key) == 0.5  # réglage mémorisé
     assert (s.measurements[key[0]].data[key[1]] != 0).all()
     s2 = Session()
     s2.load_files([EXAMPLES / GL980])
-    assert s2.noise_threshold(SHUNT) == 0.010  # voie avec repos à 0 : seuil de l'unité (cahier des charges)
+    # voie avec repos à 0 : seuil calculé sur le bruit réel des repos (pas un seuil fixe)
+    assert s2.noise_threshold(SHUNT) == s2.suggest_noise_threshold(SHUNT) != 0.010
 
 
 def test_genuine_plateau_at_max_is_kept():
@@ -377,7 +380,7 @@ def test_cycle_extremes_preserved_with_noise():
     rng = np.random.default_rng(0)
     y = square_wave() + rng.normal(0, 0.003, 500)
     y[120] = 5.0
-    out, _ = clean_signal(y, "A", CleaningOptions())
+    out, _ = clean_signal(y, "A", CleaningOptions(noise_mode="zero"))  # règle d'origine (forcer à 0)
     # max initial du cycle (palier de charge) et min final (palier de décharge) inchangés
     assert out[100:200].max() == pytest.approx(y[100:200][np.arange(100) != 20].max())
     assert out[300:400].min() == pytest.approx(y[300:400].min())
@@ -408,6 +411,33 @@ def test_rest_noise_forced_to_zero():
     assert kept[3] == 12.0
     temp, n = zero_rest_noise(np.array([0.1, 0.2, 0.1]), "°C")
     assert n == 0  # pas de seuil pour les températures
+
+
+def test_smoothing_keeps_edges_levels_and_shapes():
+    """Lisser sans mettre à 0 : bruit réduit, créneaux verticaux, niveaux et décharge conservés."""
+    from cleantrace.cleaning import smooth_preserving_edges
+
+    rng = np.random.default_rng(8)
+    t = np.arange(6000)
+    clean = np.where((t // 1000) % 3 == 0, 0.0, np.where((t // 1000) % 3 == 1, 5.0, 0.3 * np.exp(-(t % 1000) / 300)))
+    y = clean + rng.normal(0, 0.02, len(t))
+    out, n = smooth_preserving_edges(y, 11)
+    assert n > 0.9 * len(t)
+    assert np.std(out - clean) < 0.4 * np.std(y - clean)  # bruit nettement réduit
+    for edge in (1000, 2000, 4000):  # fronts : toujours verticaux (pas de pente)
+        assert abs(out[edge - 1] - clean[edge - 1]) < 0.05 and abs(out[edge] - clean[edge]) < 0.05
+    assert abs(np.mean(out[1100:1900]) - 5.0) < 0.01  # le palier garde son vrai niveau
+    assert np.all(out[200:800] != 0)  # rien n'est forcé à 0 : on garde le niveau mesuré
+    np.testing.assert_allclose(out[2050:2900], clean[2050:2900], atol=0.02)  # décharge conservée
+
+
+def test_default_cleaning_never_zeroes_real_signal():
+    """Petit courant réel (0,005 A, sous l'ancien seuil fixe de 10 mA) : gardé tel quel en moyenne."""
+    rng = np.random.default_rng(9)
+    y = np.r_[np.zeros(2000), np.full(2000, 0.005)] + rng.normal(0, 0.0005, 4000)
+    out, report = clean_signal(y, "A", CleaningOptions())
+    assert report.noise_points == 0
+    assert abs(np.mean(out[2200:3800]) - 0.005) < 0.0002
 
 
 def test_options_disable_treatments():
@@ -517,7 +547,7 @@ def test_session_end_to_end(tmp_path):
     raw = s.measurements[shunt[0]].data[shunt[1]].to_numpy().copy()
     report = s.apply_cleaning([shunt], CleaningOptions())
     cleaned = s.measurements[shunt[0]].data[shunt[1]].to_numpy()
-    assert report.peak_points > 0 and report.noise_points > 0
+    assert report.peak_points > 0 and report.smoothed_points > 0 and report.noise_points == 0  # lissé, pas mis à 0
     assert np.nanmax(cleaned) < 5.1  # plus de saturation à 10 A
     assert np.nanmax(cleaned) > 4.95  # mais les paliers de charge (5 A) sont intacts
     assert np.nanmin(cleaned) < -4.95
@@ -532,7 +562,7 @@ def test_session_end_to_end(tmp_path):
 
     # seul le fichier de l'enceinte suit le curseur de décalage
     shiftable = {sr.label: sr.shiftable for sr in s.series(keys)}
-    assert shiftable["Channel 2 - M402-M210 (°C) — nanodac_Rd_Z.txt"]
+    assert shiftable["Channel 2 — nanodac_Rd_Z.txt"]
     assert not any(v for k, v in shiftable.items() if k.endswith(GL980))
 
     s.time_offset_min = -4
@@ -542,7 +572,7 @@ def test_session_end_to_end(tmp_path):
     text = out.read_text(encoding="utf-8-sig")
     header = text.splitlines()[0].split(";")
     assert header[:2] == ["Time_min", "Temps (H:MM:SS)"]
-    assert "nanodac_Rd_Z.txt | Channel 2 - M402-M210 (°C)" in header
+    assert "nanodac_Rd_Z.txt | Channel 2" in header
     back = pd.read_csv(out, sep=";", decimal=",", encoding="utf-8-sig")
     assert back.shape == df.shape
 

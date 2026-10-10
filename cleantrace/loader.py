@@ -30,6 +30,7 @@ import pandas as pd
 from .channels import (
     DEFAULT_CHANNEL_UNIT, OTHER, Channel, make_channel, normalize_unit, quantity_of, split_name_unit,
 )
+from .i18n import _
 
 TIME_COL = "Time_min"
 
@@ -138,7 +139,7 @@ def load_measurement(
         raise
     except Exception as exc:  # pragma: no cover - filet de sécurité
         raise LoadError(
-            "Le fichier « {} » n'a pas pu être lu : {}".format(path.name, exc)
+            _("Le fichier « {} » n'a pas pu être lu : {}").format(path.name, exc)
         ) from exc
 
 
@@ -177,8 +178,8 @@ def align_time_axes(measurements: Sequence[Measurement]) -> Optional[Measurement
             overlaps = offset <= ref.duration_min and offset + m.duration_min >= 0
             if not overlaps:
                 m.align_note = (
-                    "« {} » ({}) ne couvre pas la même période que la référence « {} » ({}) : "
-                    "autre essai ? Il est affiché à partir de 0 pour comparer les courbes.".format(
+                    _("« {} » ({}) ne couvre pas la même période que la référence « {} » ({}) : "
+                    "autre essai ? Il est affiché à partir de 0 pour comparer les courbes.").format(
                         m.name, m.start.strftime("%d/%m/%Y %H:%M"), ref.name, ref.start.strftime("%d/%m/%Y %H:%M"))
                 )
                 offset = 0.0
@@ -192,10 +193,10 @@ def format_period(seconds: float) -> str:
     if not seconds or not math.isfinite(seconds):
         return "?"
     if seconds < 1:
-        return "{:g} ms".format(round(seconds * 1000, 3))
+        return _("{:g} ms").format(round(seconds * 1000, 3))
     if seconds < 60:
-        return "{:g} s".format(round(seconds, 3))
-    return "{:g} min".format(round(seconds / 60, 3))
+        return _("{:g} s").format(round(seconds, 3))
+    return _("{:g} min").format(round(seconds / 60, 3))
 
 
 # ------------------------------------------------------------------ implémentation
@@ -207,14 +208,14 @@ TAIL_BYTES = 256 * 1024  # fin du fichier analysée (séparateur, nombre de colo
 
 def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement:
     if not path.is_file():
-        raise LoadError("Fichier introuvable : {}".format(path))
+        raise LoadError(_("Fichier introuvable : {}").format(path))
     size_mb = path.stat().st_size / 1e6
-    progress("Analyse du format de {} ({:.0f} Mo)…".format(path.name, size_mb))
+    progress(_("Analyse du format de {} ({:.0f} Mo)…").format(path.name, size_mb))
 
     encoding = _detect_encoding(path)
     head, tail = _head_tail_lines(path, encoding)
     if not any(line.strip() for line in head):
-        raise LoadError("Le fichier « {} » est vide.".format(path.name))
+        raise LoadError(_("Le fichier « {} » est vide.").format(path.name))
 
     sample = [line for line in head[-300:] + tail[-300:] if line.strip()]
     unwrap = _lines_fully_quoted(sample)
@@ -234,21 +235,21 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
     first_data = _find_first_data_row(head_rows, n_cols, signature)
     if first_data is None:
         raise LoadError(
-            "Le fichier « {} » ne contient pas de données numériques exploitables "
-            "(aucune ligne de mesure reconnue).\n\n{}".format(
+            _("Le fichier « {} » ne contient pas de données numériques exploitables "
+            "(aucune ligne de mesure reconnue).\n\n{}").format(
                 path.name, _diagnostic(head, sep, n_cols, encoding))
         )
     headers, units, aliases = _find_headers(head_rows, first_data, n_cols)
     signal_names = _graphtec_amp_settings(head_rows[:first_data])
     source = _guess_source(path.name, head[:first_data])
     default_unit = DEFAULT_CHANNEL_UNIT if source == "Graphtec" else ""
-    for col, (_, unit) in signal_names.items():
+    for col, (_alias, unit) in signal_names.items():
         units.setdefault(col, unit)
 
-    progress("Lecture des mesures de {} ({:.0f} Mo)…".format(path.name, size_mb))
+    progress(_("Lecture des mesures de {} ({:.0f} Mo)…").format(path.name, size_mb))
     raw = _read_table(path, encoding, sep, decimal, first_data, headers, unwrap, merge_commas)
 
-    progress("Conversion du temps de {}…".format(path.name))
+    progress(_("Conversion du temps de {}…").format(path.name))
     time_s, start, used_cols = _extract_time(raw, decimal, path.name)
     time_s, rebuilt = _rebuild_coarse_time(time_s, _declared_sampling(head_rows[:first_data]))
 
@@ -273,8 +274,8 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
     # numéros…) : les voies du tableau AMP settings sont rattachées dans l'ordre.
     by_order = {}
     if (signal_names and len(signal_names) == len(numeric_cols)
-            and not any(col in signal_names for col, _ in numeric_cols)):
-        by_order = {col: ch for (col, _), ch in zip(numeric_cols, signal_names)}
+            and not any(col in signal_names for col, _column in numeric_cols)):
+        by_order = {col: ch for (col, _column), ch in zip(numeric_cols, signal_names)}
 
     channels: List[Channel] = []
     values = {}
@@ -285,14 +286,14 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
         ch = make_channel(ch_name, unit, alias=alias, default_unit=default_unit)
         label = _unique(ch.label, values)
         if label != ch.label:
-            ch = Channel(ch.raw_name, label, ch.unit, ch.quantity)
+            ch = Channel(ch.raw_name, label, ch.unit, ch.quantity, ch.alias)
         channels.append(ch)
         values[label] = column.to_numpy(dtype=float)
 
     if not channels:
         raise LoadError(
-            "Le fichier « {} » ne contient aucune voie de mesure numérique "
-            "en plus de la colonne temps.\n\nColonnes lues : {}".format(path.name, ", ".join(headers))
+            _("Le fichier « {} » ne contient aucune voie de mesure numérique "
+            "en plus de la colonne temps.\n\nColonnes lues : {}").format(path.name, ", ".join(headers))
         )
 
     df = pd.DataFrame(values)
@@ -301,30 +302,30 @@ def _load(path: Path, name: str, progress: Callable[[str], None]) -> Measurement
     skipped = int((~valid).sum())
     df = df[valid]
     if df.empty:
-        raise LoadError("La colonne temps du fichier « {} » est illisible.".format(path.name))
+        raise LoadError(_("La colonne temps du fichier « {} » est illisible.").format(path.name))
 
     msgs = []
     declared = _declared_count(head_rows[:first_data])
     if declared and declared > len(df) * 1.001 + 1:
         msgs.append(
-            "Le fichier annonce {} points mais n'en contient que {} : il est incomplet{}. "
-            "Utilisez de préférence le fichier d'origine de l'appareil.".format(
+            _("Le fichier annonce {} points mais n'en contient que {} : il est incomplet{}. "
+            "Utilisez de préférence le fichier d'origine de l'appareil.").format(
                 _thousands(declared), _thousands(len(df)),
-                " (probablement tronqué par Excel, limité à 1 048 576 lignes)"
+                _(" (probablement tronqué par Excel, limité à 1 048 576 lignes)")
                 if len(df) + first_data >= EXCEL_MAX_ROWS - 50 or declared > EXCEL_MAX_ROWS else "")
         )
     if rebuilt:
-        msgs.append("Horodatage moins précis que la période d'échantillonnage ({}) : temps "
-                    "recalculé à partir de la période (fichier réenregistré par Excel ?).".format(
+        msgs.append(_("Horodatage moins précis que la période d'échantillonnage ({}) : temps "
+                    "recalculé à partir de la période (fichier réenregistré par Excel ?).").format(
                         format_period(rebuilt)))
     if skipped:
-        msgs.append("{} ligne(s) sans horodatage ignorée(s) (messages, lignes incomplètes).".format(skipped))
+        msgs.append(_("{} ligne(s) sans horodatage ignorée(s) (messages, lignes incomplètes).").format(skipped))
     if over_range:
-        msgs.append("{} valeur(s) hors échelle (+++++++, BURNOUT...) laissées vides : "
-                    "« Nettoyer » répare les plus courtes.".format(over_range))
+        msgs.append(_("{} valeur(s) hors échelle (+++++++, BURNOUT...) laissées vides : "
+                    "« Nettoyer » répare les plus courtes.").format(over_range))
     if not df["_t"].is_monotonic_increasing:
         df = df.sort_values("_t", kind="mergesort")
-        msgs.append("Points remis dans l'ordre chronologique.")
+        msgs.append(_("Points remis dans l'ordre chronologique."))
     df = df.reset_index(drop=True)
 
     elapsed_min = (df.pop("_t").to_numpy(dtype=float)) / 60.0
@@ -356,9 +357,9 @@ def _detect_encoding(path: Path) -> str:
         return "utf-16"
     if b"\x00" in head[:4096]:
         raise LoadError(
-            "Le fichier « {} » semble être un fichier binaire (ex. .GBD Graphtec ou .UHH "
+            _("Le fichier « {} » semble être un fichier binaire (ex. .GBD Graphtec ou .UHH "
             "nanodac), pas un export texte. Exportez-le en CSV depuis l'appareil ou son "
-            "logiciel.".format(path.name)
+            "logiciel.").format(path.name)
         )
     # On coupe aux fins de ligne pour ne pas tronquer un caractère multi-octets
     sample = head[: head.rfind(b"\n") + 1 or None] + tail[tail.find(b"\n") + 1:]
@@ -407,7 +408,7 @@ def _read_table(path: Path, encoding: str, sep: str, decimal: str, first_data: i
     # faire, les colonnes restent du texte et sont converties ensuite.
     pandas_decimal = "." if (merge_commas or decimal == sep) else decimal
     with _open_text(path, encoding) as fh:
-        for _ in range(first_data):
+        for _line in range(first_data):
             fh.readline()
         source = fh
         if unwrap or merge_commas:
@@ -523,9 +524,9 @@ def _diagnostic(lines: List[str], sep: str, n_cols: int, encoding: str) -> str:
             shown += ["…"] + useful[k:k + 4]
             break
     return (
-        "Diagnostic : encodage {}, séparateur {}, {} colonnes.\n"
+        _("Diagnostic : encodage {}, séparateur {}, {} colonnes.\n"
         "Extrait :\n{}\n\n"
-        "Envoyez un extrait de ce fichier pour une correction rapide.".format(
+        "Envoyez un extrait de ce fichier pour une correction rapide.").format(
             encoding, SEPARATOR_NAMES.get(sep, repr(sep)), n_cols, "\n".join(short(x) for x in shown))
     )
 
@@ -553,9 +554,9 @@ def _detect_separator(sample: List[str], filename: str, head: List[str]) -> str:
         if value >= 2 and freq >= 0.6 * len(counts):
             return sep
     raise LoadError(
-        "Impossible de détecter le séparateur de colonnes du fichier « {} » "
+        _("Impossible de détecter le séparateur de colonnes du fichier « {} » "
         "(attendu : « ; », « , » ou tabulation, avec au moins une colonne temps "
-        "et une voie de mesure).\n\n{}".format(filename, _diagnostic(head, ",", 0, "?"))
+        "et une voie de mesure).\n\n{}").format(filename, _diagnostic(head, ",", 0, "?"))
     )
 
 
@@ -639,7 +640,7 @@ def _find_headers(rows, first_data, n_cols):
     « Date/Heure  Channel 2  (ENAN2);Group 1;M402-M210;°C »).
     """
     units, aliases = {}, {}
-    default = ["Temps"] + ["Voie {}".format(i + 1) for i in range(1, n_cols)]
+    default = ["Temps"] + [_("Voie {}").format(i + 1) for i in range(1, n_cols)]
     if first_data < 1:
         return default, units, aliases
     candidate = [c.strip().strip('"') for c in rows[first_data - 1]]
@@ -770,7 +771,7 @@ def _extract_time(raw: pd.DataFrame, decimal: str, filename: str):
         # Pas de nom explicite : la première colonne non-index est le temps
         candidates = [c for c in cols if not _INDEX_NAME_RE.match(c.strip())]
         if not candidates:
-            raise LoadError("Aucune colonne temps trouvée dans « {} ».".format(filename))
+            raise LoadError(_("Aucune colonne temps trouvée dans « {} ».").format(filename))
         time_cols = [candidates[0]]
 
     used = set(time_cols[:1])
@@ -813,7 +814,7 @@ def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
     if (sample != raw_sample).any():
         s = s.str.strip().str.lstrip("'")
     if sample.empty:
-        raise LoadError("La colonne temps « {} » du fichier « {} » est vide.".format(header, filename))
+        raise LoadError(_("La colonne temps « {} » du fichier « {} » est vide.").format(header, filename))
 
     if _to_numeric(sample, decimal).notna().mean() > 0.9:
         numeric = _to_numeric(s, decimal)
@@ -848,8 +849,8 @@ def _parse_time(series: pd.Series, header: str, decimal: str, filename: str):
     dt = _to_datetime(s)
     if dt.notna().mean() < 0.9:
         raise LoadError(
-            "La colonne temps « {} » du fichier « {} » n'est pas reconnue "
-            "(attendu : date/heure, H:MM:SS ou temps écoulé en ms / s / min).".format(header, filename)
+            _("La colonne temps « {} » du fichier « {} » n'est pas reconnue "
+            "(attendu : date/heure, H:MM:SS ou temps écoulé en ms / s / min).").format(header, filename)
         )
     start = dt[dt.notna()].iloc[0]
     secs = (dt - start).dt.total_seconds().to_numpy(dtype=float)

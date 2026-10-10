@@ -14,7 +14,7 @@ from cleantrace.loader import TIME_COL, load_measurement
 
 START = pd.Timestamp("2026-06-01 17:01:39")
 N = 300  # points à 100 ms
-LABELS = ["Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)", "Channel 5 - I_s2 (A)"]
+LABELS = ["Channel 3", "Channel 4", "Channel 5"]
 
 
 def reference_values():
@@ -128,7 +128,7 @@ def test_excel_resaved_without_seconds(tmp_path):
     assert m.period_s == pytest.approx(1.0)
     assert m.data[TIME_COL].iloc[-1] == pytest.approx(149 / 60)
     assert any("recalculé" in w for w in m.warnings)
-    assert [c.label for c in m.channels] == ["Channel 1 (V)", "Channel 2 (mA)"]
+    assert [c.label for c in m.channels] == ["Channel 1", "Channel 2"]
 
 
 def write_excel_resaved(path, n=N, declared=None, padded=True, utf8_bom=False):
@@ -208,7 +208,7 @@ def test_units_row_with_date_time_formats(tmp_path):
     path = tmp_path / "Mes-_260601-170139.CSV"
     path.write_text("\n".join(lines) + "\n")
     m = load_measurement(path)
-    assert [c.label for c in m.channels] == ["Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)"]
+    assert [c.label for c in m.channels] == ["Channel 3", "Channel 4"]
     assert m.start == START and m.period_s == pytest.approx(0.1)
 
 
@@ -230,4 +230,4 @@ def test_graphtec_channels_named_from_amp_settings(tmp_path, units_row):
     path = tmp_path / "Mes-_260601-170139.CSV"
     path.write_text("\n".join(lines) + "\n")
     m = load_measurement(path)
-    assert [c.label for c in m.channels] == ["Channel 3 - U_alim (V)", "Channel 4 - I_s1 (A)"]
+    assert [c.label for c in m.channels] == ["Channel 3", "Channel 4"]

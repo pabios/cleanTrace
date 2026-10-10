@@ -16,6 +16,7 @@ from matplotlib import cm
 from matplotlib.ticker import FuncFormatter, Locator, MaxNLocator
 
 from .channels import HUMIDITY, TEMPERATURE
+from .i18n import _
 
 LEGEND_MAX_ROWS = 20
 
@@ -41,7 +42,7 @@ def format_hms(minutes: float, _pos=None) -> str:
     sign = "-" if total < 0 else ""
     hours, rest = divmod(abs(total), 3600)
     mins, secs = divmod(rest, 60)
-    return "{}{}:{:02d}:{:02d}".format(sign, hours, mins, secs)
+    return _("{}{}:{:02d}:{:02d}").format(sign, hours, mins, secs)
 
 
 def format_axis_time(minutes: float, _pos=None) -> str:
@@ -53,7 +54,7 @@ def format_axis_time(minutes: float, _pos=None) -> str:
     total = int(round(minutes))
     sign = "-" if total < 0 else ""
     days, rest = divmod(abs(total), 1440)
-    return "{}{} j {:02d}:{:02d}".format(sign, days, rest // 60, rest % 60)
+    return _("{}{} j {:02d}:{:02d}").format(sign, days, rest // 60, rest % 60)
 
 
 class TimeLocator(Locator):
@@ -176,7 +177,7 @@ class PlotManager:
         for s in sorted(series, key=lambda s: not s.raw):  # le brut d'abord : dessous
             target = axes.get(s.quantity, ax)
             if s.raw:
-                (line,) = target.plot([], [], color=C["border_strong"], linewidth=0.9, label="_brut", gid=s.gid,
+                (line,) = target.plot([], [], color=C["border_strong"], linewidth=0.9, label=_("_brut"), gid=s.gid,
                                       zorder=1)
                 trace = _Trace(line, s.x, s.y, s.shiftable, s.index_base)
                 self._traces[s.gid] = trace
@@ -195,16 +196,16 @@ class PlotManager:
 
         main_units = sorted({s.unit for s in main if s.quantity not in (TEMPERATURE, HUMIDITY) and s.unit})
         if any(s.quantity not in (TEMPERATURE, HUMIDITY) for s in main):
-            ax.set_ylabel("Signaux électriques" + (" ({})".format(", ".join(main_units)) if main_units else ""))
+            ax.set_ylabel(_("Signaux électriques") + (" ({})".format(", ".join(main_units)) if main_units else ""))
         else:
             ax.set_yticks([])
         from .theme import HUMIDITY_COLOR, TEMPERATURE_COLOR
 
         if TEMPERATURE in axes:
-            axes[TEMPERATURE].set_ylabel("Température (°C)", color=TEMPERATURE_COLOR)
+            axes[TEMPERATURE].set_ylabel(_("Température (°C)"), color=TEMPERATURE_COLOR)
             axes[TEMPERATURE].tick_params(axis="y", colors=TEMPERATURE_COLOR)
         if HUMIDITY in axes:
-            axes[HUMIDITY].set_ylabel("Humidité (%HR)", color=HUMIDITY_COLOR)
+            axes[HUMIDITY].set_ylabel(_("Humidité (%HR)"), color=HUMIDITY_COLOR)
             axes[HUMIDITY].tick_params(axis="y", colors=HUMIDITY_COLOR)
         # Style épuré : fond blanc, bordures fines, grille discrète, textes atténués
         for a in axes.values():
@@ -223,13 +224,13 @@ class PlotManager:
             twin.spines["bottom"].set_visible(False)
 
         if self.percent_axis:
-            ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _pos=None: "{:g} %".format(round(v, 1))))
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda v, _pos=None: _("{:g} %").format(round(v, 1))))
             ax.xaxis.set_major_locator(MaxNLocator(nbins=10, steps=[1, 2, 2.5, 5, 10]))
-            ax.set_xlabel("Avancement (% de la durée de chaque fichier)")
+            ax.set_xlabel(_("Avancement (% de la durée de chaque fichier)"))
         else:
             ax.xaxis.set_major_formatter(FuncFormatter(format_axis_time))
             ax.xaxis.set_major_locator(TimeLocator())
-            ax.set_xlabel("Temps (H:MM:SS)")
+            ax.set_xlabel(_("Temps (H:MM:SS)"))
         ax.grid(True, color=C["muted"], linewidth=1.0)
         ax.set_axisbelow(True)
         ax.format_coord = self._format_coord
@@ -293,8 +294,8 @@ class PlotManager:
         trace.line.set_data(trace.x[trace.index] + offset, trace.y[trace.index])
 
     def _format_coord(self, x, y):
-        t = "{:.2f} %".format(x) if self.percent_axis else format_hms(x)
-        return "t = {}   y = {:.6g}".format(t, y)
+        t = _("{:.2f} %").format(x) if self.percent_axis else format_hms(x)
+        return _("t = {}   y = {:.6g}").format(t, y)
 
     @staticmethod
     def _place_legend(ax, top_ax, handles, n_twins: int) -> None:

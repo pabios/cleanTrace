@@ -1,8 +1,8 @@
 """US-02 — Voies de mesure : nettoyage des libellés, unités et grandeurs physiques.
 
 Exemples de conversions :
-    "CH1"                 -> "Channel 1 (mV)"
-    "CH3 [V]"             -> "Channel 3 (V)"
+    "CH1"                 -> "Channel 1"   (unité mV par défaut sur un Graphtec, gardée à part)
+    "CH3 [V]"             -> "Channel 3"   (unité V)
     "Courant (A)"         -> "Courant (A)"
     "Température"         -> "Température (°C)"
     "HR (%)"              -> "HR (%HR)"
@@ -72,9 +72,10 @@ class Channel:
     """Une voie de mesure d'un fichier."""
 
     raw_name: str  # libellé d'origine dans le fichier
-    label: str  # libellé nettoyé, utilisé comme nom de colonne
+    label: str  # libellé affiché (légende, liste, export) : « Channel 4 » pour une voie CHx
     unit: str  # unité normalisée ("" si inconnue)
     quantity: str  # grandeur physique (tension, courant, ...)
+    alias: str = ""  # nom donné à la voie dans la centrale (ex. « I_s1 »), repris dans le rapport
 
     @property
     def is_climatic(self) -> bool:
@@ -113,11 +114,17 @@ def make_channel(
     name, found_unit = split_name_unit(raw)
     unit = normalize_unit(unit) if unit else found_unit
 
+    alias = " ".join(alias.split())
     match = _CHANNEL_RE.match(name)
     if match:
-        name = "Channel {}".format(int(match.group(1)))
+        # Voie d'une centrale : libellé « Channel N » (comme sur l'appareil) ; le nom du
+        # signal et l'unité restent connus (rapport, axes) mais ne surchargent pas la légende.
         unit = unit or default_unit
-    elif not unit:
+        if alias.lower() == raw.strip().lower():
+            alias = ""
+        label = "Channel {}".format(int(match.group(1)))
+        return Channel(raw_name=raw, label=label, unit=unit, quantity=quantity_of(unit), alias=alias)
+    if not unit:
         if _TEMP_RE.search(name):
             unit = "°C"
         elif _HUM_RE.search(name):
@@ -128,8 +135,7 @@ def make_channel(
         unit = "%HR"
 
     name = name or raw.strip() or "Voie"
-    alias = " ".join(alias.split())
     if alias and alias.lower() not in (raw.strip().lower(), name.lower()):
         name = "{} - {}".format(name, alias)
     label = "{} ({})".format(name, unit) if unit else name
-    return Channel(raw_name=raw, label=label, unit=unit, quantity=quantity_of(unit))
+    return Channel(raw_name=raw, label=label, unit=unit, quantity=quantity_of(unit), alias=alias)

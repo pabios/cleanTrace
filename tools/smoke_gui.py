@@ -81,7 +81,7 @@ def main():
 
     # Afficher uniquement le shunt Graphtec + la température enceinte
     gui.select_all(False)
-    shunt = ("GL980_Mes-_260601-170139.CSV", "Channel 4 - I_s1 (A)")
+    shunt = ("GL980_Mes-_260601-170139.CSV", "Channel 4")
     gui._checked[shunt] = True
     gui._refresh_checkmarks()
     gui.redraw()
@@ -180,12 +180,31 @@ def main():
     shot_window(dialog, "11_nettoyage_gl860_suggestions.png")
     dialog.apply()
     wait_idle(root, gui)
-    small = gui.session.measurements["GL860_1s.CSV"].data["Channel 11 - I_LH7 (mA)"]
+    small = gui.session.measurements["GL860_1s.CSV"].data["Channel 11"]
     assert (small != 0).all(), "les petits courants ne doivent pas être effacés avec les suggestions"
     print("GL860 :", gui.status.get())
     help_window = app_module.HelpWindow.open(root, "Nettoyage")
     shot_window(help_window, "12_aide.png")
     help_window.destroy()
+
+    # Langue : passage en anglais (fichiers et traitements conservés), puis retour en français
+    gui.session.clear()
+    gui._checked.clear()
+    gui.open_files(EXAMPLES)
+    wait_idle(root, gui)
+    gui.set_language("en")
+    pump(root)
+    assert "MultiPlotter for test benches" in root.title(), root.title()
+    assert len(gui.session.measurements) == 2
+    shot(root, "13_english.png")
+    dialog = gui.clean_selected()
+    wait_dialog(dialog)
+    shot_window(dialog, "14_english_cleaning.png")
+    dialog.destroy()
+    gui.set_language("fr")
+    pump(root)
+    assert "bancs d'essai" in root.title()
+    print("langues : FR -> EN -> FR OK")
 
     if len(sys.argv) > 2:  # gros fichier : indicateur de chargement + temps total
         gui.session.clear()
