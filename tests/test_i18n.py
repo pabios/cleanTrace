@@ -9,7 +9,7 @@ from cleantrace import i18n
 from cleantrace.i18n_en import EN
 
 SOURCES = sorted((Path(__file__).resolve().parent.parent / "cleantrace").glob("*.py"))
-DISPLAY_LISTS = ("TIME_MODES", "EXPORT_STEPS", "PEAK_MODES", "APP_TITLE", "FILE_TYPES")
+DISPLAY_LISTS = ("TIME_MODES", "EXPORT_STEPS", "PEAK_MODES", "APP_TITLE", "FILE_TYPES", "TOOLTIPS", "LINE_STYLES", "MARKERS", "AXIS_NAMES", "SCALES")
 
 
 def translatable_strings():

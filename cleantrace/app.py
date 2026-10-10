@@ -26,6 +26,7 @@ from matplotlib.figure import Figure
 
 from . import __version__
 from .cleaning import CleaningOptions
+from .axes_dialog import AxesDialog
 from .dialogs import CleaningDialog
 from .editing import ClickCorrector
 from .export import Key
@@ -33,7 +34,7 @@ from .help import HelpWindow
 from .loader import write_extract
 from .report import build_report, save_figure_image
 from .session import journal_path
-from .plotting import PlotManager, format_hms
+from .plotting import PlotManager, PlotSettings, format_hms
 from .session import EXPORT_STEPS, TIME_MODES, Session
 from .theme import C, CheckImages, ScrollFrame, apply_theme, bordered, card, separator
 from .i18n import _, get_language, load_language, set_language
@@ -56,6 +57,7 @@ class CleanTraceApp:
         self._file_item: Dict[str, str] = {}  # nom de fichier -> id Treeview
         self._gid_key: Dict[str, Key] = {}  # gid de courbe -> voie
         self._key_color: Dict[Key, str] = {}  # voie -> couleur de sa courbe
+        self.plot_settings = PlotSettings()  # axes et courbes réglés par l'utilisateur (gardés au redessin)
         self._last_dir = str(EXAMPLES_DIR if EXAMPLES_DIR.is_dir() else Path.home())
         self.busy = False  # un traitement long tourne en arrière-plan
         self._action_buttons: List[ttk.Button] = []
@@ -90,6 +92,7 @@ class CleanTraceApp:
         state = {name: getattr(self, name).get() for name in
                  ("chk_noise", "chk_peaks", "chk_offset", "chk_show_raw", "chk_click_edit", "chk_zero")}
         offset = self.session.time_offset_min
+        view = self.plot.current_view()
         set_language(language)
         for widget in self.root.winfo_children():
             widget.destroy()
@@ -102,8 +105,17 @@ class CleanTraceApp:
         self._update_offset_range()
         self._set_offset(offset)
         self._rebuild_tree()
-        self.redraw()
         self._set_status(_("Langue : français."))
+        # Redessin une fois la fenêtre reconstruite et à sa taille réelle (sous Windows, l'échelle
+        # d'affichage 125 % / 150 % n'est connue qu'à ce moment) : même vue qu'avant le changement.
+        self.root.update_idletasks()
+        self.root.after(50, lambda: self._redraw_with_view(view))
+
+    def _redraw_with_view(self, view) -> None:
+        self.redraw()
+        if view is not None and self.plot.current_view() is not None:
+            self.plot.axes["main"].set_xlim(*view)
+            self.canvas.draw_idle()
 
     # ================================================================ construction
 
@@ -260,17 +272,22 @@ class CleanTraceApp:
         outer = bordered(parent)
         frame = ttk.Frame(outer, style="Card.TFrame", padding=(8, 8, 8, 4))
         frame.pack(fill=tk.BOTH, expand=True)
-        self.figure = Figure(figsize=(10, 6), dpi=100, facecolor=C["card"])
-        self.canvas = FigureCanvasTkAgg(self.figure, master=frame)
-        toolbar = NavigationToolbar2Tk(self.canvas, frame, pack_toolbar=False)
+        self.figure = Figure(figsize=(8, 5), dpi=100, facecolor=C["card"])
+        # Conteneur à taille imposée par la fenêtre : sous Windows à 125 % / 150 %, Matplotlib
+        # agrandit la zone de dessin demandée ; elle ne doit jamais déborder (effet « zoomé »).
+        holder = ttk.Frame(frame, style="Card.TFrame")
+        holder.pack_propagate(False)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=holder)
+        toolbar = _Toolbar(self.canvas, frame, on_home=self._on_home, on_edit=self.edit_axes)
         toolbar.update()
         _flatten_toolbar(toolbar)
         toolbar.pack(side=tk.BOTTOM, fill=tk.X)
         line = tk.Frame(frame, height=1, background=C["border"])
         line.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 2))
+        holder.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         widget = self.canvas.get_tk_widget()
         widget.configure(background=C["card"], highlightthickness=0)
-        widget.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        widget.pack(fill=tk.BOTH, expand=True)
         self.plot = PlotManager(self.figure)
         self.corrector = ClickCorrector(
             self.figure, self._on_point_clicked,
@@ -386,10 +403,30 @@ class CleanTraceApp:
             return
         self.session.clear()
         self._checked.clear()
+        self.plot_settings = PlotSettings()
         self._set_offset(0.0)
         self._rebuild_tree()
         self.redraw()
         self._set_status(_("Tous les fichiers ont été déchargés."))
+
+    def edit_axes(self) -> None:
+        """Fenêtre « Modifier les axes et les courbes » (bouton de la barre d'outils)."""
+        if self.busy or self.plot.current_view() is None:
+            messagebox.showinfo(_("Axes et courbes"), _("Cochez au moins une voie."), parent=self.root)
+            return
+        AxesDialog(self, self.selected_keys())
+
+    def apply_plot_settings(self, settings: PlotSettings) -> None:
+        self.plot_settings = settings
+        # Le zoom en cours est gardé si aucune limite de temps n'a été saisie
+        keep = settings.x.min is None and settings.x.max is None
+        self._redraw_with_view(self.plot.current_view() if keep else None)
+        self._set_status(_("Axes et courbes mis à jour (gardés jusqu'au bouton « Maison »)."))
+
+    def _on_home(self) -> None:
+        """Bouton « Maison » : limites automatiques (titres, libellés et styles gardés)."""
+        self.plot_settings.clear_limits()
+        self.redraw()
 
     def clean_selected(self) -> None:
         keys = self.selected_keys()
@@ -472,7 +509,7 @@ class CleanTraceApp:
         view = self.plot.current_view()
         self.run_in_background(
             _("Création de l'image {}…").format(Path(path).name),
-            lambda progress: save_figure_image(self.session, keys, view, path),
+            lambda progress: save_figure_image(self.session, keys, view, path, settings=self.plot_settings),
             lambda result: self._set_status(_("Image enregistrée : {}").format(path)),
             error_title=_("Image impossible"),
         )
@@ -497,7 +534,8 @@ class CleanTraceApp:
 
         self.run_in_background(
             _("Création du rapport {}…").format(Path(path).name),
-            lambda progress: build_report(self.session, keys, view, path, progress=progress), done,
+            lambda progress: build_report(self.session, keys, view, path, progress=progress,
+                                          settings=self.plot_settings), done,
             error_title=_("Rapport impossible"),
         )
 
@@ -631,7 +669,7 @@ class CleanTraceApp:
         self._gid_key = {s.gid: key for s, key in zip([s for s in series if not s.raw], keys)}
         self.plot.time_offset_min = self.session.time_offset_min
         self.plot.percent_axis = self.session.percent_axis
-        self.plot.draw(series)
+        self.plot.draw(series, settings=self.plot_settings)
         self._key_color = {self._gid_key[gid]: color for gid, color in self.plot.colors.items()}
         self._refresh_checkmarks()
         self._update_empty_state()
@@ -807,6 +845,36 @@ class JournalWindow(tk.Toplevel):
 
 def _thousands(n: int) -> str:
     return "{:,}".format(n).replace(",", " ")
+
+
+class _Toolbar(NavigationToolbar2Tk):
+    """Barre Matplotlib + bouton « Modifier les axes et les courbes » (comme la version Qt)."""
+
+    def __init__(self, canvas, master, on_home, on_edit):
+        self._on_home, self._on_edit = on_home, on_edit
+        # « Marges » retiré : la mise en page est automatique. Bouton d'édition avant « Enregistrer ».
+        items = [item for item in NavigationToolbar2Tk.toolitems if item[0] != "Subplots"]
+        items.insert(len(items) - 1, ("Customize", _("Modifier les axes et les courbes"),
+                                      "qt4_editor_options", "edit_parameters"))
+        self.toolitems = [(t, _(TOOLTIPS[t]) if t in TOOLTIPS else tip, img, cb) for t, tip, img, cb in items]
+        super().__init__(canvas, master, pack_toolbar=False)
+
+    def home(self, *args):
+        self._on_home()
+        self.update()  # nouvel historique de zoom
+
+    def edit_parameters(self, *args):
+        self._on_edit()
+
+
+TOOLTIPS = {
+    "Home": "Vue complète (limites automatiques)",
+    "Back": "Vue précédente",
+    "Forward": "Vue suivante",
+    "Pan": "Déplacer (clic gauche) / zoomer un axe (clic droit)",
+    "Zoom": "Loupe : tracer un rectangle",
+    "Save": "Enregistrer la vue",
+}
 
 
 def _flatten_toolbar(toolbar) -> None:

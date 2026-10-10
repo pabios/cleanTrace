@@ -28,17 +28,17 @@ A4_LANDSCAPE = (11.69, 8.27)  # pouces
 
 
 def save_figure_image(session, keys: Sequence[Key], view: Optional[Tuple[float, float]], path,
-                      title: str = "", dpi: int = 200) -> Path:
+                      title: str = "", dpi: int = 200, settings=None) -> Path:
     """Image du graphique (PNG, PDF ou SVG selon l'extension), au format A4 paysage."""
     path = Path(path)
-    fig = _plot_figure(session, keys, view, title)
+    fig = _plot_figure(session, keys, view, title, settings)
     fig.savefig(path, dpi=dpi, facecolor="white")
     session.log(_("Image du graphique exportée : {}").format(path.name))
     return path
 
 
 def build_report(session, keys: Sequence[Key], view: Optional[Tuple[float, float]], path,
-                 title: str = "", progress: Optional[Callable] = None) -> Path:
+                 title: str = "", progress: Optional[Callable] = None, settings=None) -> Path:
     """Rapport PDF : synthèse + graphique + journal des traitements."""
     path = Path(path)
     title = title or _("Rapport de traitement des mesures")
@@ -49,7 +49,7 @@ def build_report(session, keys: Sequence[Key], view: Optional[Tuple[float, float
         pdf.savefig(_summary_page(session, keys, view, title))
         if progress:
             progress(_("Rapport — graphique…"), 0.4)
-        pdf.savefig(_plot_figure(session, keys, view, title))
+        pdf.savefig(_plot_figure(session, keys, view, title, settings))
         if progress:
             progress(_("Rapport — journal des traitements…"), 0.8)
         for page in _journal_pages(session, title):
@@ -175,14 +175,18 @@ def _summary_page(session, keys, view, title) -> Figure:
     return fig
 
 
-def _plot_figure(session, keys, view, title) -> Figure:
+def _plot_figure(session, keys, view, title, settings=None) -> Figure:
     fig = _new_page()
     plot = PlotManager(fig)
     plot.time_offset_min = session.time_offset_min
     plot.percent_axis = session.percent_axis
-    plot.draw(session.series(keys), title=title)
+    plot.draw(session.series(keys), title=title, settings=settings)
     if view is not None and fig.axes:
         fig.axes[0].set_xlim(*view)
+    try:
+        fig.set_layout_engine("none")  # page A4 : marges fixes
+    except AttributeError:  # pragma: no cover - Matplotlib < 3.6
+        fig.set_tight_layout(False)
     fig.subplots_adjust(left=0.07, right=0.88 if len(fig.axes) > 1 else 0.96, top=0.92, bottom=0.10)
     return fig
 

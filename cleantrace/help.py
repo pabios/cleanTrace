@@ -110,6 +110,28 @@ Left-click a damaged point: it is replaced by the interpolation of its two
 neighbours. First disable the zoom / pan tool of the toolbar (pressed button = the
 click zooms). Zoom in to target a precise point."""),
 
+    ("Axes et courbes", "Axes et courbes", """\
+Bouton « Modifier les axes et les courbes » de la barre d'outils (icône de courbe, à
+gauche de la disquette) :
+• Onglet Axes : titre du graphique ; début et fin du temps (H:MM:SS, ex. 1:30:00 ou
+  48:00:00) ; pour chaque axe Y (signaux électriques, °C, %HR) : min, max, libellé et
+  échelle linéaire ou logarithmique. Champ vide = automatique.
+• Onglet Courbes : nom affiché dans la légende, couleur (cliquer sur la pastille),
+  épaisseur, type de trait et marqueurs de chaque voie.
+Les réglages restent quand vous cochez d'autres voies ou nettoyez, et sont repris dans
+l'image et le rapport PDF. Le bouton « Maison » remet les limites automatiques (titres,
+libellés et couleurs gardés) ; « Tout remettre par défaut » efface tout.""",
+     "Axes and curves", """\
+“Edit axes and curves” button of the toolbar (curve icon, left of the floppy disk):
+• Axes tab: chart title; start and end time (H:MM:SS, e.g. 1:30:00 or 48:00:00); for
+  each Y axis (electrical signals, °C, %RH): min, max, label and linear or logarithmic
+  scale. Empty field = automatic.
+• Curves tab: name shown in the legend, colour (click the swatch), width, line style
+  and markers of each channel.
+Settings are kept when you tick other channels or clean, and are used in the image and
+the PDF report. The “Home” button restores automatic limits (titles, labels and colours
+are kept); “Reset all to default” clears everything."""),
+
     ("Base de temps", "Base de temps", """\
 Pour superposer plusieurs fichiers :
 • Heure réelle : chaque mesure à son heure (même essai, appareils à l'heure).

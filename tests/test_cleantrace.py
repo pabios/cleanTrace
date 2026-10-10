@@ -669,3 +669,63 @@ def test_zero_rest_off_by_default_and_never_on_permanent_signal():
     assert not CleaningOptions().zero_rest
     supply = 24 + np.random.default_rng(0).normal(0, 0.02, 5000)
     assert not has_rest_phase(supply)
+
+
+def test_parse_hms_for_axis_limits():
+    from cleantrace.plotting import parse_hms
+
+    assert parse_hms("1:30:00") == 90
+    assert parse_hms("48:00:00") == 48 * 60
+    assert parse_hms("0:00:30") == 0.5
+    assert parse_hms("2:15") == 135
+    assert parse_hms("-0:01:00") == -1
+    assert parse_hms("  ") is None
+    for bad in ("abc", "1:75:00", "90", "1::"):
+        with pytest.raises(ValueError):
+            parse_hms(bad)
+
+
+def test_plot_settings_are_applied_and_kept(tmp_path):
+    from matplotlib.figure import Figure
+
+    from cleantrace.plotting import MAIN_AXIS, AxisSettings, CurveStyle, PlotManager, PlotSeries, PlotSettings
+
+    x = np.linspace(0, 600, 6001)
+    series = [PlotSeries(gid="0", label="Channel 4", x=x, y=np.sin(x) + 2, unit="A", quantity="courant",
+                         key=("f.csv", "Channel 4"))]
+    settings = PlotSettings(title="Essai 42", x=AxisSettings(min=60, max=120, label="Durée"),
+                            y={MAIN_AXIS: AxisSettings(min=0.5, max=5, label="Courant", log=True)},
+                            curves={("f.csv", "Channel 4"): CurveStyle(name="Shunt", color="#ff0000", width=2.5,
+                                                                        style="--", marker="o")})
+    fig = Figure()
+    plot = PlotManager(fig)
+    plot.draw(series, settings=settings)
+    ax = plot.axes[MAIN_AXIS]
+    assert ax.get_xlim() == (60, 120) and ax.get_ylim() == (0.5, 5)
+    assert ax.get_yscale() == "log" and ax.get_ylabel() == "Courant" and ax.get_xlabel() == "Durée"
+    assert ax.get_title(loc="left") == "Essai 42"
+    line = ax.get_lines()[0]
+    assert (line.get_label(), line.get_color(), line.get_linewidth(), line.get_linestyle(), line.get_marker()) == \
+        ("Shunt", "#ff0000", 2.5, "--", "o")
+    assert plot.colors["0"] == "#ff0000"  # pastille de la liste des voies assortie
+    # seuls les points de la période choisie sont tracés (pas toute la courbe)
+    assert line.get_xdata().min() >= 59 and line.get_xdata().max() <= 121
+    fig.canvas.draw()  # mise en page automatique sans erreur
+
+    settings.clear_limits()  # bouton « Maison »
+    plot.draw(series, settings=settings)
+    assert ax is not plot.axes[MAIN_AXIS] and plot.axes[MAIN_AXIS].get_xlim()[1] >= 600
+    assert plot.axes[MAIN_AXIS].get_ylabel() == "Courant"  # libellés gardés
+
+
+def test_report_uses_plot_settings(tmp_path):
+    from cleantrace.plotting import AxisSettings, PlotSettings
+    from cleantrace.report import _plot_figure
+
+    s = Session()
+    s.load_files([str(EXAMPLES / "GL980_Mes-_260601-170139.CSV")])
+    name = next(iter(s.measurements))
+    fig = _plot_figure(s, [(name, "Channel 4")], None, "Rapport",
+                       PlotSettings(title="Mon essai", x=AxisSettings(min=5, max=10)))
+    assert fig.axes[0].get_xlim() == (5, 10)
+    assert fig.axes[0].get_title(loc="left") == "Mon essai"

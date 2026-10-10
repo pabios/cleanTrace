@@ -171,6 +171,12 @@ def apply_theme(root: tk.Tk) -> Fonts:
 
     s.configure("TPanedwindow", background=C["background"])
     s.configure("Sash", sashthickness=8, background=C["background"], gripcount=0)
+    # Onglets (fenêtre « Axes et courbes ») : onglet actif blanc, les autres atténués
+    s.configure("TNotebook", background=C["background"], borderwidth=0, tabmargins=(0, 0, 0, 0))
+    s.configure("TNotebook.Tab", padding=(16, 6), background=C["muted"], foreground=C["muted_fg"],
+                borderwidth=0, lightcolor=C["border"], bordercolor=C["border"], focuscolor=C["card"])
+    s.map("TNotebook.Tab", background=[("selected", C["card"])], foreground=[("selected", C["fg"])],
+          expand=[("selected", (0, 0, 0, 0))])
     return fonts
 
 

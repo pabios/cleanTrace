@@ -8,8 +8,8 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from matplotlib import cm
@@ -32,6 +32,68 @@ class PlotSeries:
     shiftable: bool = False  # courbe climatique concernée par le décalage temporel
     index_base: int = 0  # indice, dans les données complètes, du premier point de x / y
     raw: bool = False  # données brutes affichées en gris sous la voie nettoyée (comparaison)
+    key: Tuple[str, str] = ("", "")  # (fichier, voie) : sert aux réglages des courbes
+
+
+MAIN_AXIS = "main"  # axe Y de gauche (signaux électriques) ; les autres : TEMPERATURE, HUMIDITY
+LINE_STYLES = {"-": "Continu", "--": "Tirets", ":": "Pointillés", "-.": "Tiret-point"}
+MARKERS = {"": "Aucun", ".": "Point", "o": "Rond", "s": "Carré", "x": "Croix"}
+
+
+@dataclass
+class AxisSettings:
+    """Réglages d'un axe. None : automatique (limites calculées, libellé par défaut)."""
+    min: Optional[float] = None
+    max: Optional[float] = None
+    label: Optional[str] = None
+    log: bool = False
+
+
+@dataclass
+class CurveStyle:
+    """Apparence d'une voie. None : valeur par défaut (couleur de la palette, nom de la voie)."""
+    name: Optional[str] = None
+    color: Optional[str] = None
+    width: float = 1.2
+    style: str = "-"
+    marker: str = ""
+
+
+@dataclass
+class PlotSettings:
+    """Réglages du graphique (bouton « Modifier les axes et les courbes ») : gardés quand on
+    change de voies ou qu'on nettoie, repris dans l'image et le rapport PDF."""
+    title: str = ""
+    x: AxisSettings = field(default_factory=AxisSettings)
+    y: Dict[str, AxisSettings] = field(default_factory=dict)
+    curves: Dict[Tuple[str, str], CurveStyle] = field(default_factory=dict)
+
+    def y_axis(self, name: str) -> AxisSettings:
+        return self.y.setdefault(name, AxisSettings())
+
+    def clear_limits(self) -> None:
+        """Retour aux limites automatiques (bouton « Maison »), libellés et styles gardés."""
+        for axis in [self.x] + list(self.y.values()):
+            axis.min = axis.max = None
+
+
+def parse_hms(text: str) -> Optional[float]:
+    """« H:MM:SS » ou « H:MM » (heures au-delà de 24 acceptées, signe « - » possible) -> minutes.
+
+    Champ vide : None (automatique). ValueError si le texte n'est pas lisible.
+    """
+    text = text.strip()
+    if not text:
+        return None
+    sign = -1.0 if text.startswith("-") else 1.0
+    parts = text.lstrip("+-").replace(",", ".").split(":")
+    if not 2 <= len(parts) <= 3 or not all(p.strip() for p in parts):
+        raise ValueError(text)
+    hours, minutes = int(parts[0]), int(parts[1])
+    seconds = float(parts[2]) if len(parts) == 3 else 0.0
+    if not (0 <= minutes < 60 and 0 <= seconds < 60) or hours < 0:
+        raise ValueError(text)
+    return sign * (hours * 60 + minutes + seconds / 60.0)
 
 
 def format_hms(minutes: float, _pos=None) -> str:
@@ -99,6 +161,15 @@ def _colors(n: int):
 MAX_BUCKETS = 2000
 
 
+def _auto_layout(fig) -> None:
+    """Mise en page recalculée à CHAQUE dessin : marges justes même si la taille ou l'échelle
+    d'affichage (Windows à 125 %, 150 %) changent après le dessin, ex. au changement de langue."""
+    try:
+        fig.set_layout_engine("tight")
+    except AttributeError:  # pragma: no cover - Matplotlib < 3.6
+        fig.set_tight_layout(True)
+
+
 def decimate_indices(y: np.ndarray, start: int, stop: int, buckets: int = MAX_BUCKETS) -> np.ndarray:
     """Indices à tracer entre ``start`` et ``stop`` : tous si peu nombreux, sinon min/max par tranche."""
     count = stop - start
@@ -141,13 +212,16 @@ class PlotManager:
         self.colors: Dict[str, str] = {}  # gid -> couleur de la courbe
         self.draw([])
 
-    def draw(self, series: Sequence[PlotSeries], title: str = "") -> None:
+    def draw(self, series: Sequence[PlotSeries], title: str = "", settings: Optional[PlotSettings] = None) -> None:
         fig = self.figure
         fig.clear()
+        _auto_layout(fig)
         self._traces = {}
         self.colors = {}
+        self.axes = {}
         ax = fig.add_subplot(111)
         self._main_ax = ax
+        settings = settings or PlotSettings()
 
         if not series:
             ax.set_axis_off()  # l'application affiche son propre écran d'accueil
@@ -156,7 +230,7 @@ class PlotManager:
 
         from .theme import C
 
-        axes = {"main": ax}
+        axes = {MAIN_AXIS: ax}
         if any(s.quantity == TEMPERATURE for s in series):
             axes[TEMPERATURE] = ax.twinx()
         if any(s.quantity == HUMIDITY for s in series):
@@ -176,8 +250,11 @@ class PlotManager:
                 self._traces[s.gid] = trace
                 self._refresh(trace, None)
                 continue
-            color = palette[s.gid]
-            (line,) = target.plot([], [], color=color, linewidth=1.2, label=s.label, gid=s.gid, zorder=2)
+            style = settings.curves.get(s.key) or CurveStyle()
+            color = style.color or palette[s.gid]
+            (line,) = target.plot([], [], color=color, linewidth=style.width, linestyle=style.style,
+                                  marker=style.marker or None, markersize=3, label=style.name or s.label,
+                                  gid=s.gid, zorder=2)
             self.colors[s.gid] = color
             trace = _Trace(line, s.x, s.y, s.shiftable, s.index_base)
             self._traces[s.gid] = trace
@@ -227,18 +304,41 @@ class PlotManager:
         ax.grid(True, color=C["muted"], linewidth=1.0)
         ax.set_axisbelow(True)
         ax.format_coord = self._format_coord
+        title = settings.title or title
         if title:
             ax.set_title(title, fontsize=10, loc="left", color="0.35")
+        self.axes = axes
+        self._apply_axis_settings(settings)
 
         self._place_legend(ax, list(axes.values())[-1], handles, n_twins=len(axes) - 1)
-        try:
-            fig.tight_layout()
-        except Exception:  # pragma: no cover - tight_layout peut échouer sur de très petites fenêtres
-            pass
+        if settings.x.min is not None or settings.x.max is not None:
+            self._on_xlim_changed(ax)  # points de la période choisie
         # Zoom / déplacement : on recalcule les points visibles
         for a in axes.values():
             a.callbacks.connect("xlim_changed", self._on_xlim_changed)
         fig.canvas.draw_idle()
+
+    def _apply_axis_settings(self, settings: PlotSettings) -> None:
+        """Limites, libellés et échelles choisis par l'utilisateur (sinon : automatiques)."""
+        ax = self._main_ax
+        if settings.x.label is not None:
+            ax.set_xlabel(settings.x.label)
+        if settings.x.min is not None or settings.x.max is not None:
+            ax.set_xlim(left=settings.x.min, right=settings.x.max)
+        for name, a in self.axes.items():
+            axis = settings.y.get(name)
+            if axis is None:
+                continue
+            if axis.log:
+                a.set_yscale("log")
+            if axis.label is not None:
+                a.set_ylabel(axis.label)
+            if axis.min is not None or axis.max is not None:
+                a.set_ylim(bottom=axis.min, top=axis.max)
+
+    def axis_titles(self) -> Dict[str, str]:
+        """Libellé actuel de chaque axe Y affiché (pour la fenêtre de réglage)."""
+        return {name: a.get_ylabel() for name, a in self.axes.items()}
 
     def set_time_offset(self, minutes: float) -> None:
         """Décale les courbes climatiques sans retracer le graphique."""

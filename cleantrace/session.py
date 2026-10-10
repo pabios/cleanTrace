@@ -308,12 +308,14 @@ class Session:
                     quantity=ch.quantity,
                     shiftable=m.is_thermal and not self.percent_axis,
                     index_base=first,
+                    key=(name, label),
                 )
             )
             if with_raw and self.modified_points((name, label)):
                 raw = self.raw_values((name, label))[first:first + len(x)]
                 out.append(PlotSeries(gid=_("raw:{}").format(i), label=_("_brut"), x=x, y=raw, unit=ch.unit,
-                                      quantity=ch.quantity, shiftable=out[-1].shiftable, index_base=first, raw=True))
+                                      quantity=ch.quantity, shiftable=out[-1].shiftable, index_base=first, raw=True,
+                                      key=(name, label)))
         return out
 
     # ------------------------------------------------------------------- export

@@ -193,6 +193,41 @@ def main():
     small = gui.session.measurements["GL860_1s.CSV"].data["Channel 11"]
     assert (small != 0).all(), "les petits courants ne doivent pas être effacés avec les suggestions"
     print("GL860 :", gui.status.get())
+    # Bouton « Modifier les axes et les courbes » (barre d'outils)
+    from cleantrace.axes_dialog import AxesDialog
+    from cleantrace.plotting import format_hms
+    axes_dialog = AxesDialog(gui, gui.selected_keys())
+    pump(root)
+    shot_window(axes_dialog, "15_axes.png")
+    axes_dialog.x_vars[0].set("0:02:00")
+    axes_dialog.x_vars[1].set("0:06:00")
+    axes_dialog.title_var.set("Essai GL860 — cycle 1")
+    first = gui.selected_keys()[0]
+    name, color, width, line, marker, *_rest = axes_dialog.curve_vars[first]
+    name.set("Alimentation")
+    color.set("#d62728")
+    width.set("2,5")
+    line.set("Tirets")
+    tabs = axes_dialog.nametowidget(axes_dialog.winfo_children()[0].winfo_children()[2])
+    tabs.select(1)
+    pump(root)
+    shot_window(axes_dialog, "16_courbes.png")
+    axes_dialog.ok()
+    pump(root)
+    view = gui.plot.current_view()
+    assert (format_hms(view[0]), format_hms(view[1])) == ("0:02:00", "0:06:00"), view
+    first_line = [l for l in gui.figure.axes[0].get_lines() if l.get_label() == "Alimentation"]
+    assert first_line and first_line[0].get_linewidth() == 2.5 and first_line[0].get_linestyle() == "--"
+    gui.redraw()  # changement de voies / nettoyage : réglages gardés
+    assert format_hms(gui.plot.current_view()[0]) == "0:02:00"
+    shot(root, "17_axes_appliques.png")
+    gui.canvas.toolbar.home()  # Maison : limites automatiques, styles gardés
+    assert gui.plot.current_view()[0] < 1
+    assert any(l.get_label() == "Alimentation" for l in gui.figure.axes[0].get_lines())
+    gui.plot_settings = app_module.PlotSettings()
+    gui.redraw()
+    print("axes et courbes : OK")
+
     help_window = app_module.HelpWindow.open(root, "Nettoyage")
     shot_window(help_window, "12_aide.png")
     help_window.destroy()
@@ -202,9 +237,38 @@ def main():
     gui._checked.clear()
     gui.open_files(EXAMPLES)
     wait_idle(root, gui)
-    gui.set_language("en")
+    # Portable 1366×768 à 125 % (cas du client) : après le changement de langue, même vue,
+    # et graduations / libellés entièrement visibles (pas d'effet « zoomé »).
+    root.geometry("1366x728+0+0")
     pump(root)
+    gui.plot.axes["main"].set_xlim(5, 25)
+    gui.set_language("en")
+    # Ce que fait Matplotlib sous Windows à 125 % quand le nouveau graphique s'affiche :
+    # figure à 125 dpi et zone de dessin agrandie d'autant.
+    root.tk.call("tk", "scaling", 1.25 * 96 / 72)
+    gui.canvas._update_device_pixel_ratio()
+    for _ in range(10):
+        root.update()
+        time.sleep(0.03)
+    pump(root)
+    widget = gui.canvas.get_tk_widget()
+    right = widget.winfo_rootx() + widget.winfo_width()
+    bottom = widget.winfo_rooty() + widget.winfo_height()
+    assert right <= root.winfo_rootx() + root.winfo_width() and bottom <= root.winfo_rooty() + root.winfo_height(), \
+        ("graphique plus grand que la fenêtre (effet zoom)", widget.winfo_width(), widget.winfo_height())
     assert "MultiPlotter for test benches" in root.title(), root.title()
+    assert tuple(round(v, 6) for v in gui.plot.current_view()) == (5, 25), gui.plot.current_view()
+    gui.canvas.draw()
+    renderer = gui.figure.canvas.get_renderer()
+    W, H = gui.figure.bbox.width, gui.figure.bbox.height
+    for a in gui.figure.axes:
+        box = a.get_tightbbox(renderer)
+        assert box.x0 >= -2 and box.y0 >= -2 and box.x1 <= W + 2 and box.y1 <= H + 2, (box, W, H)
+    print("langue : vue gardée, axes visibles à 125 %")
+    root.tk.call("tk", "scaling", 96 / 72)
+    gui.canvas._update_device_pixel_ratio()
+    root.geometry("1500x900+0+0")
+    pump(root)
     assert len(gui.session.measurements) == 2
     shot(root, "13_english.png")
     dialog = gui.clean_selected()
